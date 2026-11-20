@@ -1,0 +1,27 @@
+name: ci
+on:
+  workflow_dispatch: {}   # 仅构建阶段手动触发，不在每个 PR 运行
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt
+        run: cargo fmt --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: test
+        run: cargo test --workspace
+      - name: file size gate (<=1000 lines per .rs)
+        run: |
+          bad=0
+          for f in $(git ls-files '*.rs'); do
+            n=$(wc -l < "$f")
+            if [ "$n" -gt 1000 ]; then echo "OVERLIMIT $f: $n lines"; bad=1; fi
+          done
+          exit $bad
