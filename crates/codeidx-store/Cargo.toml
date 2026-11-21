@@ -1,0 +1,15 @@
+[package]
+name = "codeidx-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# 依赖方向（ARCHITECTURE §2）：store → ast（复用 ast 中定义的核心数据类型）。
+# 另依赖叶子 crate codeidx-protocol（Issue #4 契约：SearchHit/SymbolCode/
+# OutlineEntry DTO 与 ToolError），protocol 无内部依赖，不产生环。
+codeidx-ast = { workspace = true }
+codeidx-protocol = { workspace = true }
+
+# 存储：FTS5 由 bundled SQLite 内嵌编译默认开启（rusqlite 0.43 无独立 fts5 feature）
+rusqlite = { workspace = true }

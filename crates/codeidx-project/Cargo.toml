@@ -1,0 +1,18 @@
+[package]
+name = "codeidx-project"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# 依赖方向（ARCHITECTURE §2）：project → ast, store；
+# MountReport / SyncReport 等 DTO 与 ToolError 复用 protocol（与 store → protocol 同一先例）。
+codeidx-ast = { workspace = true }
+codeidx-store = { workspace = true }
+codeidx-protocol = { workspace = true }
+
+dashmap = { workspace = true }
+rayon = { workspace = true }
+ignore = { workspace = true }
+blake3 = { workspace = true }
+tracing = { workspace = true }

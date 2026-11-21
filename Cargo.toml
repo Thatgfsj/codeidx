@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/codeidx-mcp",
+    "crates/codeidx-protocol",
+    "crates/codeidx-project",
+    "crates/codeidx-ast",
+    "crates/codeidx-store",
+    "crates/codeidx-lsp",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+
+[workspace.dependencies]
+# 内部 crate（依赖方向见 ARCHITECTURE §2）
+codeidx-protocol = { path = "crates/codeidx-protocol" }
+codeidx-project = { path = "crates/codeidx-project" }
+codeidx-ast = { path = "crates/codeidx-ast" }
+codeidx-store = { path = "crates/codeidx-store" }
+codeidx-lsp = { path = "crates/codeidx-lsp" }
+
+# 序列化与协议
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+
+# 并发与异步
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "io-std", "io-util", "macros", "signal", "process", "time", "sync"] }
+dashmap = "6.2.1"
+rayon = "1.12.0"
+
+# 遍历与哈希
+ignore = "0.4.34"
+blake3 = "1.8.7"
+
+# tree-sitter 语言驱动（版本组经 /tmp 依赖冒烟验证可共同编译运行）
+tree-sitter = "0.27.2"
+tree-sitter-rust = "0.24.2"
+tree-sitter-python = "0.25.0"
+tree-sitter-typescript = "0.23.2"
+tree-sitter-go = "0.25.0"
+tree-sitter-java = "0.23.5"
+tree-sitter-c = "0.24.2"
+tree-sitter-cpp = "0.23.4"
+
+# 存储（FTS5 由 bundled 内嵌编译默认开启，无独立 fts5 feature）
+rusqlite = { version = "0.43.0", features = ["bundled"] }
+
+# 日志（仅 stderr）
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

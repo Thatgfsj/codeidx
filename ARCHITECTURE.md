@@ -29,8 +29,9 @@ crates/
 ```
 mcp(bin) → protocol, project, ast, store, lsp
 project → ast, store
-store   → ast        // 复用 ast 中定义的核心数据类型
-ast, lsp, protocol  // 叶子 crate，无内部依赖
+store   → ast, protocol   // 数据类型复用 ast；检索命中 DTO 复用 protocol
+lsp     → ast             // 消费 Lang 枚举
+ast, protocol  // 叶子 crate，无内部依赖
 ```
 
 核心数据类型（`codeidx-ast/src/types.rs`，骨架阶段冻结，后续修改需 Lead 审批）：
