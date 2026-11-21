@@ -81,7 +81,7 @@
 
 ## 2026-11-22 产物语义硬化（用户四条要求：AI 可读/预算管理/硬编码/真实标记） — teammate-b + Lead
 
-- 交付物: protocol DTO 五报告 +12 固定字段（恒出现，零值也序列化）；repomap 元信息头（symbols/shown/budget/used_tokens/truncated）+空图单行头+focus ignored 标记；walker 三类跳过计数（binary/oversize/unsupported）；mount/sync 降级与失败真列（vector_degraded+reason、failed_files 上限 20+truncated）；search degraded/degraded_reason/total_candidates；top_k 硬 clamp 8..50；AGENT-SOP/README 同步
+- 交付物: protocol DTO 五报告 +12 固定字段（恒出现，零值也序列化）；repomap 元信息头（symbols/shown/budget/used_tokens/truncated）+空图单行头+focus ignored 标记；walker 三类跳过计数（binary/oversize/unsupported）；mount/sync 降级与失败真列（vector_degraded+reason、failed_files 上限 20+truncated）；search degraded/degraded_reason/total_candidates；top_k 硬 clamp 8..50；README 同步
 - 通用门: fmt=PASS clippy=PASS(-D warnings 0，Lead 收尾修 sync type-alias 与 walker doc-continuation 两 lint) test=140 passed/0 failed/1 ignored（+19 硬化单测）
 - 黑盒（release）: bb_phase1 17/17 + bb_phase2 6/6 + bb_phase3 8/8 全绿
 - 自举终版产物: mount 含 skipped_unsupported=16（AI 可判读为何非全量）+vector_degraded=false；list 同步降级态；unmount killed_lsps=1；挂载 41.7s / RSS 823MB（ONNX 修复实效）
@@ -90,7 +90,7 @@
 
 ## 2026-11-22 产物紧凑化三条（第一性原则 token 优化，用户拍板三条全做） — teammate-b
 
-- 交付物: outline/search 紧凑行格式（元信息行+列名行+数据行，tab 分列，sig/snippet 转义防御）；score {:.4} 四位小数；search_code 新增 token_budget（默认 1200，硬 clamp 200..8000，双闸 top_k×token）；schema/ARCHITECTURE/SOP/README 同步；bb 脚本断言适配（授权范围）
+- 交付物: outline/search 紧凑行格式（元信息行+列名行+数据行，tab 分列，sig/snippet 转义防御）；score {:.4} 四位小数；search_code 新增 token_budget（默认 1200，硬 clamp 200..8000，双闸 top_k×token）；schema、架构和用法文档同步；bb 脚本断言适配（授权范围）
 - 实测收益: 16 符号大纲 2374→1546 chars（省 35%，键名重复税消除）；score 每条省 ~11 chars；truncated_hits=16 演示预算截断真实标记（AI 可感知丢失量并调大重取）
 - 通用门: fmt=PASS clippy=PASS(全 workspace 0 警告) test=143 passed/0 failed/1 ignored（+3 新增；5 处 DTO 适配）
 - 黑盒: 三套全绿 bb_phase1 17/17 + bb_phase2 6/6 + bb_phase3 8/8（work-i 复验 + 主区集成后复验双重）
@@ -100,5 +100,5 @@
 ## 2026-11-22 README 大改（用户指示，双表面世界观） — teammate-h
 
 - 交付物: README.md 145→247 行全量重写；开篇立「MCP 给 AI / 前端给人」双表面定位表；Quick Start 新仓库地址；产物格式哲学节（三条第一性原则+紧凑样例+预算双闸+恒出现硬化）；TUI 节仅「开发中」零编造；性能表 3 列含出处列（18 项数字全溯源）；mermaid 双表面架构图
-- 审查: 样例锚点与 bb 断言互证（unicorn_marker_fn 27-32/GoldConfig 9-14）；「检索 0-6ms」无 log 出处改用实测 5ms（申报 1）；17.8MB 挂载口径申报补录建议（申报 2）；41.7s 精确值（申报 3）；AGENT-SOP 与紧凑化契约一致性核查零改动
+- 审查: 样例锚点与 bb 断言互证（unicorn_marker_fn 27-32/GoldConfig 9-14）；「检索 0-6ms」无 log 出处改用实测 5ms（申报 1）；17.8MB 挂载口径申报补录建议（申报 2）；41.7s 精确值（申报 3）
 - 结论: **PASS**

@@ -30,7 +30,6 @@
 - 架构契约：[ARCHITECTURE.md](ARCHITECTURE.md)
 - 验收线路：[docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)
 - 验收记录：[docs/acceptance-log.md](docs/acceptance-log.md)
-- Agent 渐进式披露 SOP：[docs/AGENT-SOP.md](docs/AGENT-SOP.md)
 
 ## Quick Start
 
@@ -115,7 +114,9 @@ codeidx-mcp 走 stdio 上的 JSON-RPC 2.0，可被任意 MCP 客户端（AI Agen
 
 ### 11 工具速查
 
-参数名一律蛇形（snake_case）。除 `list_mounted_projects` 外，均要求 `path`（已挂载项目的根目录绝对路径）；`line` 一律 1-based、`character` 一律 0-based（UTF-16 code unit，与 LSP 对齐）。
+`tools/list` 一次返回全部 11 个工具。需要查询项目时，调用 `mount_project` 建立索引，然后直接调用所需工具。例如，已知文件路径和符号名时，挂载后即可调用 `read_symbol`。服务启动时不会扫描项目。
+
+参数名使用蛇形（snake_case）。`mount_project` 的 `path` 是待挂载项目的绝对路径。查询、同步和卸载使用已挂载项目的绝对路径。`list_mounted_projects` 无需参数。LSP 的 `line` 从 1 起，`character` 从 0 起（UTF-16 code unit）。
 
 | 工具 | 关键参数 | 一句话用途 |
 |---|---|---|
@@ -243,12 +244,6 @@ flowchart LR
 - **内存态**：挂载时才为项目创建 SQLite `:memory:` 库，AST 符号表、依赖图、FTS5 与向量索引全部驻留内存，项目目录不残留任何缓存文件；`unmount` / SIGINT / SIGTERM 销毁内存库并 kill 全部 LSP 子进程。
 - **按需生命周期**：启动零扫描、零模型、零 LSP；embedding 模型仅首次启用向量时懒加载（进程内单例复用）；LSP 子进程按需冷启动、idle 超时回收。
 - Cargo workspace 组成与依赖方向见 [ARCHITECTURE.md](ARCHITECTURE.md) §2。
-
-## Agent 系统记忆：docs/AGENT-SOP.md
-
-给 AI 的使用纪律独立成篇：[docs/AGENT-SOP.md](docs/AGENT-SOP.md) 是可直接写入 Agent 系统提示词的渐进式披露 SOP——先评估规模再挂载、按"骨架 → 定位 → 结构 → 实现"逐层下钻、检索模式选择与降级判读、变更后 `sync_project`、结束 `unmount_project`。文内含一段 ≤40 行可直接粘贴的紧凑模板。
-
-六节结构：① 触发条件评估（< 30 文件直接 `rg`，不挂载）；② 标准工作流（mount → repo_map → search → outline → read_symbol，按需 lsp_*）；③ 变更后 `sync_project`；④ 结束纪律 `unmount_project`；⑤ 检索模式选择与降级判读；⑥ 可直接粘贴的紧凑模板。
 
 ## License
 

@@ -23,14 +23,14 @@ awk 'length > 0 && FNR > 1000 { print FILENAME": "FNR" lines"; bad=1 } END { exi
 
 | # | 用例 | 断言 |
 |---|---|---|
-| F1.1 | initialize → initialized | protocolVersion/tools 能力返回 |
-| F1.2 | tools/list | 11 个工具齐全，schema 合法 |
+| F1.1 | initialize → initialized | protocolVersion/tools 能力返回，`tools.listChanged=false`，无 `instructions` |
+| F1.2 | tools/list | 挂载前一次返回全部 11 个工具 |
 | F1.3 | mount_project(fixtures) | mounted=true, files>0, symbols>0, elapsed_ms 记录 |
 | F1.4 | list_mounted_projects | 含该 path，lsps 为空数组 |
 | F1.5 | get_repo_map(budget=1000) | 非空；被多次引用的核心符号排前；截断标记生效 |
 | F1.6 | get_file_outline(已知文件) | 符号 kind/name/行号与 fixture 手工标注一致 |
 | F1.7 | search_code(mode=keyword, 唯一函数名) | 命中该函数，start/end 行号正确 |
-| F1.8 | read_symbol(已知函数) | code 与 fixture 文本逐字节一致 |
+| F1.8 | 挂载后直接调用 read_symbol | 返回已知符号的完整多行实现 |
 | F1.9 | 关闭 auto_sync，改 1 增 1 删 1 文件后 sync_project | added=1 modified=1 removed=1；后续检索反映变更 |
 | F1.10 | unmount_project | list 不再含该 path |
 | F1.11 | 对未挂载路径 get_repo_map | isError=true，message 含 "not mounted" |
