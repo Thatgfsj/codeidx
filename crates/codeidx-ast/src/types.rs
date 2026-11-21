@@ -31,6 +31,16 @@ pub enum Lang {
     C,
     /// C++（tree-sitter-cpp）。
     Cpp,
+    /// Dart（tree-sitter-dart；LSP：dart language-server）。
+    Dart,
+    /// Kotlin（tree-sitter-kotlin；LSP：kotlin-language-server）。
+    Kotlin,
+    /// C#（tree-sitter-c-sharp；LSP：OmniSharp / csharp-ls）。
+    CSharp,
+    /// PHP（tree-sitter-php；LSP：intelephense / phpactor）。
+    Php,
+    /// HTML（tree-sitter-html；无 LSP，仅符号级索引）。
+    Html,
 }
 
 /// 符号类别。
