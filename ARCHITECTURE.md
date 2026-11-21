@@ -11,6 +11,7 @@
 - 显式挂载：仅 `mount_project(path)` 后才初始化该项目内存索引。
 - 纯内存态：一切索引存于 SQLite `:memory:`；目标项目目录不残留任何缓存文件。
 - 即时释放：`unmount_project(path)` 销毁内存库并 kill 关联 LSP 子进程；SIGINT/SIGTERM 优雅清理全部子进程后退出。
+- 平台支持：Linux 一线支持（全功能实测）；macOS 理论支持；Windows 已知不支持项（SIGTERM / /proc / mallopt）见 docs/COMPAT.md 支持矩阵。
 
 ## 2. Cargo Workspace 结构与依赖方向
 
