@@ -96,3 +96,9 @@
 - 黑盒: 三套全绿 bb_phase1 17/17 + bb_phase2 6/6 + bb_phase3 8/8（work-i 复验 + 主区集成后复验双重）
 - 偏离裁定: 6 项全接受（handlers 980 行贴线申报——测试拆分列入后续；FileOutline DTO 暂留；tokens 口径仅数据行与 repo_map 对齐）
 - 结论: **PASS**（另：GitHub 仓库已改名 Thatgfsj/codeidx-mcp → Thatgfsj/codeidx，文档无硬编码 URL 无需文本同步；crate 名保留——codeidx-mcp 是 workspace 内 MCP 接入层的准确命名，与 codeidx-tui 对应）
+
+## 2026-11-22 README 大改（用户指示，双表面世界观） — teammate-h
+
+- 交付物: README.md 145→247 行全量重写；开篇立「MCP 给 AI / 前端给人」双表面定位表；Quick Start 新仓库地址；产物格式哲学节（三条第一性原则+紧凑样例+预算双闸+恒出现硬化）；TUI 节仅「开发中」零编造；性能表 3 列含出处列（18 项数字全溯源）；mermaid 双表面架构图
+- 审查: 样例锚点与 bb 断言互证（unicorn_marker_fn 27-32/GoldConfig 9-14）；「检索 0-6ms」无 log 出处改用实测 5ms（申报 1）；17.8MB 挂载口径申报补录建议（申报 2）；41.7s 精确值（申报 3）；AGENT-SOP 与紧凑化契约一致性核查零改动
+- 结论: **PASS**
