@@ -24,10 +24,10 @@
    - 默认 `enable_vector=false`；仅当预感需要纯语义检索（自然语言描述找代码）才显式传 `enable_vector=true`。
 2. **建全局认知**：`get_repo_map(path, token_budget=3000)`。得到 PageRank 加权骨架：核心模块与高频引用符号排前。先读骨架，不读源文件正文。
    - 排查收窄到某几个文件后，传 `focus_files=[...]` 提升聚焦文件的符号权重。
-3. **定位**：`search_code(path, query, mode=..., top_k=8)`。
+3. **定位**：`search_code(path, query, mode=..., top_k=8)`（top_k 上限 50，超取 50）。
    - 符号名 / 唯一标识 → `mode=keyword`
    - 业务语义（"处理重试的逻辑"这类）→ `mode=hybrid`（默认）
-   - 检查返回的 `mode` 字段：回显值 ≠ 请求值即发生了降级（见 §5），照常使用结果。
+   - 检查 `degraded` 字段：true 即降级（见 §5），照常使用结果。
 4. **看结构**：`get_file_outline(path, file_path)`。拿到符号 kind / name / 行号 / 签名，无函数体——先确认该文件是否值得精读。
 5. **精读实现**：`read_symbol(path, file_path, symbol_name)`。只读命中的符号，不读整文件。
 6. **精确引用面**（按需，成本最高）：`lsp_references` / `lsp_definition`（查类型用 `lsp_hover`）。位置参数 `line` 1-based、`character` 0-based；首次调用会冷启动对应语言的 LSP 子进程。
@@ -50,7 +50,7 @@
 | `hybrid` | 默认；业务语义、不记得确切符号名 | FTS5 + 向量 RRF 融合，两路命中都进结果 |
 | `vector` | 纯语义描述（自然语言找代码） | 仅向量 KNN；要求挂载时 `enable_vector=true` |
 
-降级语义：向量未就绪（挂载时 `enable_vector=false` / 模型加载失败 / 环境变量 `CODEIDX_DISABLE_VECTOR=1`）时，vector / hybrid 请求**自动降级 keyword 且请求仍成功**；客户端唯一可靠判据是返回的 `mode` 回显实际执行模式——请求 hybrid 回显 keyword 即降级。
+降级判读（产物语义硬化）：向量未就绪（挂载时 `enable_vector=false` / 模型加载失败 / 环境变量 `CODEIDX_DISABLE_VECTOR=1`）时，vector / hybrid 请求**自动降级 keyword 且请求仍成功**。最直接判据是响应的 `degraded` 字段——true 即降级，`degraded_reason` 给出原因（`vector not enabled for this mount` / `CODEIDX_DISABLE_VECTOR=1` / `model init failed: ...`，三种之一）；`mode` 回显实际执行模式的既有语义保持一致（请求 hybrid 回显 keyword 同样意味着降级）。空结果时先看 `total_candidates`：>0 说明有索引、只是无命中，可换词或换模式重试；=0 才是无索引数据。
 
 ## 6. 系统提示词模板（可直接粘贴）
 
@@ -68,7 +68,7 @@ codeidx 工作流（严格按序下钻）：
    收窄后可用 focus_files 提权。
 3. search_code 定位：符号名/唯一标识 → mode=keyword；
    业务语义 → mode=hybrid（默认）；纯语义描述 → mode=vector。
-   返回 mode ≠ 请求值 = 已降级 keyword，接受并继续。
+   degraded=true = 已降级 keyword（degraded_reason 给原因），接受并继续。
 4. get_file_outline 看目标文件结构（无函数体）。
 5. read_symbol 只精读命中的符号实现。
 6. 需要精确类型/引用面才 lsp_definition / lsp_references

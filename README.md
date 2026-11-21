@@ -78,17 +78,19 @@ EOF
 
 | 工具 | 关键参数 | 一句话用途 |
 |---|---|---|
-| `mount_project` | `path`；`enable_vector?`（bool，默认 false） | 挂载项目并在内存中构建索引；其余工具仅对已挂载项目可用 |
+| `mount_project` | `path`；`enable_vector?`（bool，默认 false） | 挂载项目并在内存中构建索引；返回 `skipped_binary/skipped_oversize/skipped_unsupported` 三类跳过计数与 `vector_degraded/vector_degraded_reason` 降级标记 |
 | `unmount_project` | `path` | 卸载项目：销毁内存索引并回收关联的 LSP 子进程 |
 | `list_mounted_projects` | — | 列出当前已挂载的项目及其索引规模 |
-| `sync_project` | `path` | 增量同步，反映文件系统的增 / 改 / 删 |
-| `get_repo_map` | `path`；`focus_files?`；`token_budget?`（默认 3000） | PageRank 加权的代码骨架图（纯文本，超预算截断） |
-| `search_code` | `path`；`query`；`mode?`（hybrid/keyword/vector，默认 hybrid）；`top_k?`（默认 8） | 三模式代码检索；返回 `mode` 回显实际执行模式 |
+| `sync_project` | `path` | 增量同步，反映文件系统的增 / 改 / 删；`failed`/`failed_files`（上限 20）真实列出重建失败文件 |
+| `get_repo_map` | `path`；`focus_files?`；`token_budget?`（默认 3000） | PageRank 加权骨架图；首行元信息头 `# repo_map symbols/shown/budget/used_tokens/truncated`，未索引聚焦文件逐个标记 `# focus_files ignored: <path>` |
+| `search_code` | `path`；`query`；`mode?`（hybrid/keyword/vector，默认 hybrid）；`top_k?`（默认 8，上限 50） | 三模式代码检索；`degraded`/`degraded_reason` 显式标记降级，`total_candidates` 给出候选块总数 |
 | `get_file_outline` | `path`；`file_path` | 单个文件的符号大纲（无函数体） |
 | `read_symbol` | `path`；`file_path`；`symbol_name` | 指定符号的完整实现代码 |
 | `lsp_definition` | `path`；`file_path`；`line`；`character` | 跳转到指定位置的符号定义 |
 | `lsp_references` | `path`；`file_path`；`line`；`character` | 列出指定位置符号的全部引用 |
 | `lsp_hover` | `path`；`file_path`；`line`；`character` | 返回指定位置的 hover 信息 |
+
+产物语义硬化（AI 消费约定）：上述新增字段**恒出现**——0 / false / 空串 / 空数组也照常序列化，消费方可按固定字段集直接判读，无需缺省键探测；空结果配 `total_candidates>0` 即"无命中"而非"无索引"，`get_repo_map` 空图返回单行头（与执行错误 isError 路径明确区分）。
 
 ## 环境变量
 

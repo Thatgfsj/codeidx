@@ -2,6 +2,10 @@
 //!
 //! 键为 canonicalize 后的项目根；重复 mount 同一路径 = 卸载旧上下文后
 //! 重建（幂等，且新上下文构建成功后才替换，失败不破坏既有索引）。
+//!
+//! 产物语义硬化：ProjectContext 持久化挂载时的向量降级态
+//! （vector_degraded / vector_degraded_reason），list 的 ProjectInfo
+//! 与 MountReport 同步可见。
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -15,7 +19,7 @@ use dashmap::DashMap;
 
 use crate::{mount, sync, walker};
 
-/// 单项目索引上下文：内存库 + 解析缓存 + 文件记录表。
+/// 单项目索引上下文：内存库 + 解析缓存 + 文件记录表 + 向量降级态。
 pub struct ProjectContext {
     /// 项目根（canonicalize 后的绝对路径）。
     pub root: PathBuf,
@@ -25,6 +29,10 @@ pub struct ProjectContext {
     pub parsed: HashMap<String, ParsedFile>,
     /// rel_path -> 文件记录（mtime 秒级 + size + blake3 十六进制）。
     pub files: HashMap<String, FileRecord>,
+    /// 挂载时请求向量但实际降级为纯 FTS5（list / search 降级原因来源）。
+    pub vector_degraded: bool,
+    /// 降级原因（mount.rs resolve_vector 产出）；未降级为空串。
+    pub vector_degraded_reason: String,
 }
 
 /// 单文件索引记录（增量 sync 的 mtime+size 快筛依据）。
@@ -87,11 +95,16 @@ impl ProjectManager {
             elapsed_ms: started.elapsed().as_millis() as u64,
             mem_est_mb: built.mem_est_mb,
             vector: built.vector,
+            skipped_binary: built.skipped_binary,
+            skipped_oversize: built.skipped_oversize,
+            skipped_unsupported: built.skipped_unsupported,
+            vector_degraded: built.vector_degraded,
+            vector_degraded_reason: built.vector_degraded_reason,
         })
     }
 
     /// 卸载：移除上下文（store 随之 drop，内存即释放）。
-    /// killed_lsps Phase 1 恒 0，Phase 3 接 LSP 清理。
+    /// killed_lsps 由 handlers 层 LSP 桥填充（Phase 3，F3.4）。
     pub fn unmount(&self, path: &Path) -> Result<UnmountReport, ToolError> {
         let root = Self::canonical_root(path).map_err(|_| Self::not_mounted(path))?;
         if self.projects.remove(&root).is_none() {
@@ -114,8 +127,10 @@ impl ProjectManager {
                     path: ctx.root.to_string_lossy().into_owned(),
                     files: ctx.files.len() as u64,
                     symbols: ctx.store.stats().symbols,
-                    lsps: Vec::new(), // Phase 3 接 LSP 生命周期；Phase 1 恒空。
+                    lsps: Vec::new(), // handlers 层按 LSP 桥活动态填充。
                     vector: ctx.store.is_vector_enabled(),
+                    vector_degraded: ctx.vector_degraded,
+                    vector_degraded_reason: ctx.vector_degraded_reason.clone(),
                 }
             })
             .collect();
@@ -129,6 +144,7 @@ impl ProjectManager {
         let started = Instant::now();
         let root = Self::canonical_root(path).map_err(|_| Self::not_mounted(path))?;
         // walk 在锁外完成，尽量缩短 DashMap 写锁持有时间。
+        // sync 不消费 walker 的跳过计数（防线内文件本就不属增量重建范围）。
         let present = walker::collect(&root);
         let mut ctx = self
             .projects

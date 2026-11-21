@@ -25,7 +25,25 @@ pub(crate) static MANAGER: LazyLock<ProjectManager> = LazyLock::new(ProjectManag
 /// 秒）；空桥只有一张空 DashMap，不增加空闲 RSS（F1.13 门）。
 pub(crate) static LSP: LazyLock<Arc<LspBridge>> = LazyLock::new(|| Arc::new(LspBridge::from_env()));
 
+// glibc 多线程 malloc arena 上限：ONNX/线程池默认每线程最多 8 个 arena，
+// 16 线程服务会把分配器缓存放大数 GB RSS（dogfooding 实测挂载膨胀 4GB
+// 的主放大因子）。上限 2 个 arena，嵌入为小对象分配，争用可忽略。
+#[cfg(target_os = "linux")]
+extern "C" {
+    fn mallopt(param: i32, value: i32) -> i32;
+}
+
+/// M_ARENA_MAX 的 glibc 常量值（定义在 malloc.h，此处避免整头文件引入）。
+#[cfg(target_os = "linux")]
+const M_ARENA_MAX: i32 = -8;
+
 fn main() {
+    // 进程级一次，先于一切多线程活动。
+    #[cfg(target_os = "linux")]
+    // SAFETY: mallopt 是线程安全的分配器参数设置（glibc 文档保证）。
+    unsafe {
+        mallopt(M_ARENA_MAX, 2);
+    }
     // 日志初始化：显式绑定 stderr writer，绝不触碰 stdout。
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
