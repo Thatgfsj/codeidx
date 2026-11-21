@@ -20,7 +20,7 @@
 - **按需挂载**：仅当 AI 调用 `mount_project(path)` 时才在内存中初始化索引
 - **纯内存态**：AST 符号表 / 依赖图 / FTS5 / 向量索引全部在 SQLite `:memory:`，不在项目目录残留缓存
 - **三层能力**：
-  1. AST 骨架（Tree-sitter + PageRank RepoMap）
+  1. AST 骨架（Tree-sitter + PageRank RepoMap）。PHP（`.php`）提取常见声明与静态可识别的引用。HTML（`.html`、`.htm`）按元素的显式 `id` 建立结构索引。
   2. 混合检索（FTS5 BM25 + sqlite-vec 向量 + RRF 融合，fastembed 懒加载可选）
   3. 按需 LSP 桥（rust-analyzer 等，idle timeout 自动回收）
 - **即时释放**：`unmount_project` 销毁内存库并 kill 关联 LSP；SIGINT/SIGTERM 优雅清理
