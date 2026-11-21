@@ -17,7 +17,9 @@ use crate::types::{Lang, SymbolDef, SymbolKind, SymbolRef};
 
 /// C / C++ 定义提取拆分至子模块 clang（见 extract/clang.rs）。
 mod clang;
+mod csharp;
 mod html;
+mod kotlin;
 mod php;
 
 /// 提取单文件的符号与引用；任何失败返回空集，不 panic。
@@ -134,6 +136,8 @@ impl<'a> Extractor<'a> {
     /// 节点是否充当"容器"（其子树内的定义要挂 parent）。
     fn container_host(&mut self, node: Node) -> Option<String> {
         match (self.lang, node.kind()) {
+            (Lang::Kotlin, _) => self.kotlin_container(node),
+            (Lang::CSharp, _) => self.csharp_container(node),
             (Lang::Php, _) => self.php_container(node),
             (Lang::Html, _) => self.html_container(node),
             (Lang::Rust, "trait_item") => self.name_text(node),
@@ -186,9 +190,8 @@ impl<'a> Extractor<'a> {
             Lang::Dart => self.handle_dart_def(node, kind, parent),
             Lang::Php => self.handle_php_def(node, parent),
             Lang::Html => self.handle_html_def(node, parent),
-            Lang::Kotlin | Lang::CSharp => {
-                unreachable!("extractor for {:?} not yet delivered", self.lang)
-            }
+            Lang::Kotlin => self.handle_kotlin_def(node, parent),
+            Lang::CSharp => self.handle_csharp_def(node, parent),
         }
     }
 
@@ -684,8 +687,12 @@ impl<'a> Extractor<'a> {
 
     /// 归一化签名：定义头（去 body / 注释）压成单行，超 120 字符截断。
     fn signature(&self, node: Node) -> String {
+        self.signature_before(node, node.child_by_field_name("body"))
+    }
+
+    fn signature_before(&self, node: Node, body: Option<Node>) -> String {
         let start = node.start_byte();
-        let cut = match node.child_by_field_name("body") {
+        let cut = match body {
             Some(body) => body.start_byte(),
             None => node.end_byte(),
         };
@@ -707,6 +714,8 @@ impl<'a> Extractor<'a> {
 
     fn try_ref(&mut self, node: Node) {
         let name = match self.lang {
+            Lang::Kotlin => self.kotlin_ref(node),
+            Lang::CSharp => self.csharp_ref(node),
             Lang::Php => self.php_ref(node),
             Lang::Html => None,
             _ => self.generic_ref(node),

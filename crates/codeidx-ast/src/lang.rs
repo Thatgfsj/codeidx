@@ -26,6 +26,8 @@ pub fn detect_lang(path: &str) -> Option<Lang> {
         "java" => Some(Lang::Java),
         "c" | "h" => Some(Lang::C),
         "cpp" | "cc" | "hpp" => Some(Lang::Cpp),
+        "kt" | "kts" => Some(Lang::Kotlin),
+        "cs" => Some(Lang::CSharp),
         "dart" => Some(Lang::Dart),
         "php" => Some(Lang::Php),
         "html" | "htm" => Some(Lang::Html),
@@ -48,10 +50,8 @@ pub fn language_of(lang: Lang) -> Language {
         Lang::Dart => tree_sitter_dart::LANGUAGE.into(),
         Lang::Php => tree_sitter_php::LANGUAGE_PHP.into(),
         Lang::Html => tree_sitter_html::LANGUAGE.into(),
-        // 尚未映射扩展名的语言由各自的语言包补齐。
-        Lang::Kotlin | Lang::CSharp => {
-            unreachable!("extractor for {lang:?} not yet delivered")
-        }
+        Lang::Kotlin => tree_sitter_kotlin_ng::LANGUAGE.into(),
+        Lang::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
     }
 }
 
