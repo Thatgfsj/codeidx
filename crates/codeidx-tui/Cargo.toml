@@ -1,0 +1,24 @@
+[package]
+name = "codeidx-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "codeidx-tui"
+path = "src/main.rs"
+
+[dependencies]
+# 引擎层直连（ARCHITECTURE §2 依赖方向：tui 与 mcp bin 平级，只消费叶子与引擎）
+codeidx-project = { workspace = true }
+codeidx-ast = { workspace = true }
+codeidx-store = { workspace = true }
+codeidx-lsp = { workspace = true }
+codeidx-protocol = { workspace = true }
+
+# TUI 前端
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+
+# LSP 桥共用常驻运行时，保持子进程 IO 和空闲回收任务。
+tokio = { workspace = true }

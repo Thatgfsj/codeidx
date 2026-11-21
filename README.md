@@ -9,10 +9,10 @@
 | 表面 | 用户 | 形态 | 状态 |
 |---|---|---|---|
 | `codeidx-mcp` | AI（Agent / IDE） | stdio MCP 服务：11 个工具、紧凑行产物、token 预算双闸 | 已交付，黑盒验收全绿 |
-| `codeidx-tui` | 人 | 原生终端前端 | 开发中 |
+| `codeidx-tui` | 人 | 原生终端前端 | 已交付 |
 
 - **同一引擎**：AST 骨架 + FTS5/向量混合检索 + LSP 桥；纯内存、按需挂载、`unmount_project` 即释放。
-- **命名**：仓库为 **codeidx**；`codeidx-mcp` 是 workspace 内 MCP 接入层 crate 的准确命名（与在途的 `codeidx-tui` 对应）。
+- **命名**：仓库为 **codeidx**；`codeidx-mcp` 是 workspace 内 MCP 接入层 crate 的准确命名（与`codeidx-tui` 对应）。
 
 ## 核心特性
 
@@ -181,9 +181,16 @@ src/lib.rs:9 struct GoldConfig
 - `search_code` 的 `degraded/degraded_reason`（vector 未启用 / `CODEIDX_DISABLE_VECTOR=1` / 模型加载失败三种之一）与 `total_candidates`：空结果配 `total_candidates>0` 即"无命中"而非"无索引"
 - `sync_project` 的 `failed/failed_files`（上限 20）真实列出重建失败文件，`truncated` 标记是否截断清单
 
-## 给人的表面：codeidx-tui（开发中）
+## 给人的表面：codeidx-tui
 
-MCP 的紧凑行产物为 token 优化，不为人眼优化。给人用的交互面由 `codeidx-tui` 承担：同一引擎之上的原生终端前端。**当前开发中**——本仓库的引擎能力（索引 / 检索 / LSP 桥，即 11 个工具背后的全部实现）已交付并经三套黑盒验收，TUI 集成后本节将补全使用说明。
+`cargo run --locked -p codeidx-tui` 启动终端前端，直接使用本地索引引擎。输入项目路径或用方向键选中 HOME 下的目录，按 Enter 挂载。向量索引默认关闭，Ctrl+V 切换。
+
+- F1–F5 切换 Skeleton、Search、Outline、Lsp、Projects。
+- Search 的 Tab 切换检索模式，Enter 执行检索或下钻符号源码。
+- Lsp 输入 `相对路径:行:列`（行从 1 起，列从 0 起），Enter 查定义，Ctrl+R 查引用。首次请求会按需启动本机语言服务器。
+- Projects 用 `s` 同步索引、`u` 卸载。`?` 查看按键，`q` 请求退出。
+
+`cargo run --locked -p codeidx-tui -- --selftest` 无需终端即可验证挂载、各页面渲染、检索降级、符号下钻和卸载。
 
 ## 性能与资源实测
 
@@ -214,7 +221,7 @@ flowchart LR
     AI["AI（MCP 客户端 / Agent / IDE）"]
     H["人（终端）"]
     MCP["codeidx-mcp · MCP 接入层<br/>stdio · JSON-RPC 2.0（一行一条 JSON）<br/>11 工具 · 紧凑行产物 · 预算双闸"]
-    TUI["codeidx-tui · 终端前端<br/>（开发中）"]
+    TUI["codeidx-tui · 终端前端"]
 
     subgraph ENG["codeidx 引擎 · 单一 Rust 二进制 · 纯内存"]
         direction TB
@@ -229,8 +236,8 @@ flowchart LR
 
     AI -->|"stdio"| MCP
     MCP -->|"tools/call"| ENG
-    H -.->|"终端交互"| TUI
-    TUI -.->|"同一引擎（集成中）"| ENG
+    H -->|"终端交互"| TUI
+    TUI -->|"同一引擎"| ENG
 ```
 
 - **内存态**：挂载时才为项目创建 SQLite `:memory:` 库，AST 符号表、依赖图、FTS5 与向量索引全部驻留内存，项目目录不残留任何缓存文件；`unmount` / SIGINT / SIGTERM 销毁内存库并 kill 全部 LSP 子进程。

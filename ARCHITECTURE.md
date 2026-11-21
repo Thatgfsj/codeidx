@@ -18,6 +18,7 @@
 ```
 crates/
   codeidx-mcp        (bin)  入口、stdio 主循环、信号处理、工具路由
+  codeidx-tui        (bin)  终端交互入口、状态机、渲染、引擎桥
   codeidx-protocol   (lib)  JSON-RPC 2.0 + MCP 类型 + 工具 DTO/Schema
   codeidx-project    (lib)  ProjectManager(DashMap) + walker(ignore) + 增量 sync
   codeidx-ast        (lib)  tree-sitter 语言驱动、符号/引用提取、PageRank RepoMap
@@ -29,6 +30,7 @@ crates/
 
 ```
 mcp(bin) → protocol, project, ast, store, lsp
+tui(bin) → protocol, project, ast, store, lsp
 project → ast, store
 store   → ast, protocol   // 数据类型复用 ast；检索命中 DTO 复用 protocol
 lsp     → ast             // 消费 Lang 枚举

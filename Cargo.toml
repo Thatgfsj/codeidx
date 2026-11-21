@@ -7,6 +7,7 @@ members = [
     "crates/codeidx-ast",
     "crates/codeidx-store",
     "crates/codeidx-lsp",
+    "crates/codeidx-tui",
 ]
 
 [workspace.package]
@@ -67,3 +68,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 #   libssl-dev 必败；default features 的 image-models 代码检索不需要。
 sqlite-vec = "0.1"
 fastembed = { version = "7.7", default-features = false, features = ["onnx", "hf-hub-rustls-tls", "ort-download-binaries-rustls-tls"] }
+
+# 终端前端
+ratatui = "0.29"
+crossterm = "0.28"
