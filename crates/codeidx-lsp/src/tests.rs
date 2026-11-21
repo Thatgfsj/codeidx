@@ -48,6 +48,7 @@ async fn frame_missing_content_length_is_error() {
     assert!(proto::read_frame(&mut reader).await.is_err());
 }
 
+#[cfg(unix)]
 #[test]
 fn uri_round_trip_preserves_path() {
     for path in ["/tmp/plain/src/lib.rs", "/tmp/a b/项目 100%.rs"] {
@@ -57,6 +58,7 @@ fn uri_round_trip_preserves_path() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn uri_to_display_path_prefers_root_relative() {
     let root = Path::new("/tmp/proj");
@@ -69,13 +71,16 @@ fn uri_to_display_path_prefers_root_relative() {
 
 #[test]
 fn parse_locations_variants() {
-    let root = Path::new("/tmp/proj");
+    #[cfg(not(windows))]
+    let (root, uri_prefix) = (Path::new("/tmp/proj"), "file:///tmp/proj");
+    #[cfg(windows)]
+    let (root, uri_prefix) = (Path::new(r"\\?\C:\proj"), "file:///c:/proj");
 
     let null = json!(null);
     assert!(proto::parse_locations(&null, root).is_empty());
 
     let single = json!({
-        "uri": "file:///tmp/proj/src/lib.rs",
+        "uri": format!("{uri_prefix}/src/lib.rs"),
         "range": {"start": {"line": 26, "character": 7}},
     });
     assert_eq!(
@@ -89,7 +94,7 @@ fn parse_locations_variants() {
 
     // LocationLink 数组：优先 targetSelectionRange。
     let links = json!([{
-        "targetUri": "file:///tmp/proj/src%20copy/lib.rs",
+        "targetUri": format!("{uri_prefix}/src%20copy/lib.rs"),
         "targetRange": {"start": {"line": 10, "character": 0}},
         "targetSelectionRange": {"start": {"line": 9, "character": 4}},
     }]);
@@ -101,6 +106,138 @@ fn parse_locations_variants() {
             character: 4,
         }]
     );
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_file_uris_round_trip() {
+    let file = r"C:\a b\项目 100% #.rs";
+    let unc = r"\\server\share\src\lib.rs";
+    for (original, uri, normal) in [
+        (
+            file,
+            "file:///C:/a%20b/%E9%A1%B9%E7%9B%AE%20100%25%20%23.rs",
+            file,
+        ),
+        (
+            r"\\?\C:\a b\项目 100% #.rs",
+            "file:///C:/a%20b/%E9%A1%B9%E7%9B%AE%20100%25%20%23.rs",
+            file,
+        ),
+        (unc, "file://server/share/src/lib.rs", unc),
+        (
+            r"\\?\UNC\server\share\src\lib.rs",
+            "file://server/share/src/lib.rs",
+            unc,
+        ),
+    ] {
+        assert_eq!(proto::path_to_uri(Path::new(original)), uri);
+        assert_eq!(proto::uri_to_path(uri), Some(PathBuf::from(normal)));
+    }
+    assert_eq!(
+        proto::uri_to_path("file://localhost/C:/"),
+        Some(PathBuf::from(r"C:\"))
+    );
+    assert_eq!(
+        proto::uri_to_path("file:///C%3A/src/lib.rs"),
+        Some(PathBuf::from(r"C:\src\lib.rs"))
+    );
+    assert_eq!(proto::uri_to_path("https://server/share/src/lib.rs"), None);
+    assert_eq!(proto::uri_to_path("file://server/"), None);
+    assert_eq!(
+        proto::uri_to_display_path(
+            "file://server/share/src/lib.rs",
+            Path::new(r"\\?\UNC\server\share")
+        )
+        .as_deref(),
+        Some("src/lib.rs")
+    );
+    assert_eq!(
+        proto::uri_to_display_path("file:///D:/src/lib.rs", Path::new(r"\\?\C:\src")).as_deref(),
+        Some(r"D:\src\lib.rs")
+    );
+}
+
+#[test]
+fn windows_pathext_filters_non_launchable_suffixes_in_order() {
+    use crate::detect::windows_extensions;
+
+    assert_eq!(
+        windows_extensions(None).collect::<Vec<_>>(),
+        [".com", ".exe", ".bat", ".cmd"]
+    );
+    assert_eq!(
+        windows_extensions(Some("")).collect::<Vec<_>>(),
+        [".com", ".exe", ".bat", ".cmd"]
+    );
+    assert_eq!(
+        windows_extensions(Some(".PY; .cMd ;.ps1;;.EXE;.TXT;.BAT;.CoM")).collect::<Vec<_>>(),
+        [".cmd", ".exe", ".bat", ".com"]
+    );
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn resolve_server_uses_absolute_usable_path_in_path_order() {
+    use crate::detect::resolve_on_path;
+
+    let root = std::env::temp_dir().join(format!("codeidx-lsp-resolve-{}", std::process::id()));
+    let earlier = root.join("earlier bin");
+    let later = root.join("later bin");
+    fs::create_dir_all(&earlier).unwrap();
+    fs::create_dir_all(&later).unwrap();
+    let search = std::env::join_paths([&earlier, &later]).unwrap();
+    let name = "rust-analyzer";
+
+    #[cfg(windows)]
+    {
+        fs::write(earlier.join(name), "").unwrap();
+        fs::write(earlier.join("rust-analyzer.py"), "").unwrap();
+        fs::create_dir(earlier.join("rust-analyzer.exe")).unwrap();
+        let exe = later.join("rust-analyzer.exe");
+        let cmd = later.join("rust-analyzer.cmd");
+        fs::write(&exe, "").unwrap();
+        fs::write(&cmd, "@exit /b 17\r\n").unwrap();
+        assert_eq!(
+            resolve_on_path(name, &search, Some(".PY;.EXE;.CMD")),
+            Some(exe)
+        );
+        let program = resolve_on_path(name, &search, Some(".CMD;.EXE")).unwrap();
+        assert!(program.is_absolute());
+        assert_eq!(program, cmd);
+        assert_eq!(
+            std::process::Command::new(program).status().unwrap().code(),
+            Some(17)
+        );
+        assert_eq!(resolve_on_path(name, &search, Some(".PY;.TXT")), None);
+        let first = earlier.join("rust-analyzer.cmd");
+        fs::write(&first, "").unwrap();
+        assert_eq!(
+            resolve_on_path(name, &search, Some(".EXE;.CMD")),
+            Some(first)
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let non_executable = earlier.join(name);
+        fs::write(&non_executable, "").unwrap();
+        fs::set_permissions(&non_executable, fs::Permissions::from_mode(0o644)).unwrap();
+        let real_file = later.join("target");
+        fs::write(&real_file, "#!/bin/sh\nexit 17\n").unwrap();
+        fs::set_permissions(&real_file, fs::Permissions::from_mode(0o755)).unwrap();
+        let link = later.join(name);
+        symlink(&real_file, &link).unwrap();
+        let program = resolve_on_path(name, &search, None).unwrap();
+        assert!(program.is_absolute());
+        assert_eq!(program, link);
+        assert_eq!(
+            std::process::Command::new(program).status().unwrap().code(),
+            Some(17)
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

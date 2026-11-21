@@ -1,7 +1,8 @@
 //! 语言服务器二进制探测（PATH 扫描）与 languageId 映射。
 
 use std::env;
-use std::path::Path;
+use std::ffi::OsStr;
+use std::path::{self, Path, PathBuf};
 
 use codeidx_ast::Lang;
 
@@ -85,10 +86,16 @@ pub(crate) fn server_candidates(lang: Lang) -> &'static [ServerSpec] {
 
 /// 按 PATH 探测语言服务器；找不到时返回契约错误文案
 /// `language server for <lang> not found on PATH`。
-pub(crate) fn detect_server(lang: Lang) -> Result<&'static ServerSpec, LspError> {
-    for spec in server_candidates(lang) {
-        if is_on_path(spec.name) {
-            return Ok(spec);
+pub(crate) fn detect_server(lang: Lang) -> Result<(&'static ServerSpec, PathBuf), LspError> {
+    if let Some(path) = env::var_os("PATH") {
+        #[cfg(windows)]
+        let extensions = env::var("PATHEXT").ok();
+        #[cfg(not(windows))]
+        let extensions: Option<String> = None;
+        for spec in server_candidates(lang) {
+            if let Some(program) = resolve_on_path(spec.name, &path, extensions.as_deref()) {
+                return Ok((spec, program));
+            }
         }
     }
     Err(LspError(format!(
@@ -97,12 +104,50 @@ pub(crate) fn detect_server(lang: Lang) -> Result<&'static ServerSpec, LspError>
     )))
 }
 
-/// PATH 扫描（与 `Command::new` 的 execvp 语义一致；空 PATH 组件 = cwd）。
-fn is_on_path(binary: &str) -> bool {
-    let Some(path_var) = env::var_os("PATH") else {
-        return false;
+/// 保留 PATH 顺序。使用绝对路径固定命中项，但不解析符号链接（如 rustup 代理）。
+pub(crate) fn resolve_on_path(
+    binary: &str,
+    search_path: &OsStr,
+    pathext: Option<&str>,
+) -> Option<PathBuf> {
+    #[cfg(windows)]
+    let names: Vec<_> = windows_extensions(pathext)
+        .map(|ext| format!("{binary}{ext}"))
+        .collect();
+    #[cfg(not(windows))]
+    let names = {
+        let _ = pathext;
+        [binary]
     };
-    env::split_paths(&path_var).any(|dir| executable(&dir.join(binary)))
+
+    env::split_paths(search_path).find_map(|dir| {
+        // path::absolute 不接受空路径，但 PATH 空组件代表当前目录。
+        let dir = if dir.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            &dir
+        };
+        let dir = path::absolute(dir).ok()?;
+        names
+            .iter()
+            .map(|name| dir.join(name))
+            .find(|p| executable(p))
+    })
+}
+
+#[cfg(any(windows, test))]
+pub(crate) fn windows_extensions(pathext: Option<&str>) -> impl Iterator<Item = &'static str> + '_ {
+    const ALLOWED: [&str; 4] = [".com", ".exe", ".bat", ".cmd"];
+    pathext
+        .filter(|exts| !exts.trim().is_empty())
+        .unwrap_or(".COM;.EXE;.BAT;.CMD")
+        .split(';')
+        // Rust Command 启动原生 .exe/.com，并处理 .bat/.cmd。其余文件关联不适用。
+        .filter_map(|ext| {
+            ALLOWED
+                .into_iter()
+                .find(|allowed| ext.trim().eq_ignore_ascii_case(allowed))
+        })
 }
 
 fn executable(path: &Path) -> bool {

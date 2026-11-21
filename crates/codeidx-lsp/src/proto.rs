@@ -114,7 +114,27 @@ where
 /// 路径 → `file://` URI（非保留字节百分号编码，保留 `/`）。
 pub(crate) fn path_to_uri(path: &Path) -> String {
     let mut out = String::from("file://");
-    for &byte in path.to_string_lossy().as_bytes() {
+    #[cfg(windows)]
+    {
+        let path = without_verbatim_prefix(path);
+        let text = path.to_string_lossy().replace('\\', "/");
+        if let Some(unc) = text.strip_prefix("//") {
+            push_uri_path(&mut out, unc);
+        } else if matches!(text.as_bytes(), [b'A'..=b'Z' | b'a'..=b'z', b':', b'/', ..]) {
+            out.push('/');
+            out.push_str(&text[..2]); // 盘符的冒号是 URI 路径的一部分。
+            push_uri_path(&mut out, &text[2..]);
+        } else {
+            push_uri_path(&mut out, &text);
+        }
+    }
+    #[cfg(not(windows))]
+    push_uri_path(&mut out, &path.to_string_lossy());
+    out
+}
+
+fn push_uri_path(out: &mut String, path: &str) {
+    for &byte in path.as_bytes() {
         match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
                 out.push(byte as char);
@@ -122,24 +142,82 @@ pub(crate) fn path_to_uri(path: &Path) -> String {
             _ => out.push_str(&format!("%{byte:02X}")),
         }
     }
-    out
 }
 
-/// `file://` URI → 路径（百分号解码）；非该 scheme 返回 `None`。
+/// file URI → 路径（百分号解码）；非 file scheme 返回 None。
 pub(crate) fn uri_to_path(uri: &str) -> Option<PathBuf> {
     let rest = uri.strip_prefix("file://")?;
-    let decoded = percent_decode(rest);
-    if decoded.is_empty() {
-        return None;
+    #[cfg(not(windows))]
+    {
+        let decoded = percent_decode(rest);
+        (!decoded.is_empty()).then(|| PathBuf::from(decoded))
     }
-    Some(PathBuf::from(decoded))
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+
+        if rest.contains(['?', '#', '\\']) {
+            return None;
+        }
+        let (host, path) = rest.split_once('/')?;
+        let path = percent_decode(path).replace('/', "\\");
+        if path.contains('\0') {
+            return None;
+        }
+        if host.is_empty() || host.eq_ignore_ascii_case("localhost") {
+            // 本机 URI 的首个 / 是 URI 分隔符，不是 Windows 路径的一部分。
+            if matches!(
+                path.as_bytes(),
+                [b'A'..=b'Z' | b'a'..=b'z', b':', b'\\', ..]
+            ) {
+                return Some(PathBuf::from(path));
+            }
+            return None;
+        }
+        let host = percent_decode(host);
+        if host.contains(['/', '\\', ':', '@', '\0']) || path.starts_with('\\') {
+            return None;
+        }
+        let path = PathBuf::from(format!(r"\\{host}\{path}"));
+        // UNC 必须有共享名，且不能被解释成设备或 verbatim 路径。
+        match path.components().next() {
+            Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::UNC(_, share) if !share.is_empty()) => {
+                Some(path)
+            }
+            _ => None,
+        }
+    }
+}
+
+#[cfg(windows)]
+fn without_verbatim_prefix(path: &Path) -> std::borrow::Cow<'_, Path> {
+    use std::path::{Component, Prefix};
+
+    if let Some(Component::Prefix(prefix)) = path.components().next() {
+        // canonicalize 返回的扩展长度前缀没有标准 file URI 表示。
+        let text = path.to_string_lossy();
+        match prefix.kind() {
+            Prefix::VerbatimDisk(_) => return PathBuf::from(&text[4..]).into(),
+            Prefix::VerbatimUNC(..) => return PathBuf::from(format!(r"\\{}", &text[8..])).into(),
+            _ => {}
+        }
+    }
+    path.into()
 }
 
 /// 响应 URI → 项目根相对路径；项目外目标（stdlib / 依赖源码等）返回
 /// 解码后的绝对路径，避免静默丢弃跳转结果。
 pub(crate) fn uri_to_display_path(uri: &str, root: &Path) -> Option<String> {
     let path = uri_to_path(uri)?;
+    #[cfg(windows)]
+    let root = without_verbatim_prefix(root);
+    #[cfg(windows)]
+    let root = root.as_ref();
+
     Some(match path.strip_prefix(root) {
+        #[cfg(windows)]
+        Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
+        #[cfg(not(windows))]
         Ok(rel) => rel.to_string_lossy().into_owned(),
         Err(_) => path.to_string_lossy().into_owned(),
     })

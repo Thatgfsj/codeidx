@@ -56,8 +56,8 @@ pub(crate) struct LspProcess {
 impl LspProcess {
     /// 拉起子进程并完成 initialize → initialized 握手。
     pub(crate) async fn spawn(root: &Path, lang: Lang) -> Result<Arc<Self>, LspError> {
-        let spec = detect::detect_server(lang)?;
-        let mut command = Command::new(spec.name);
+        let (spec, program) = detect::detect_server(lang)?;
+        let mut command = Command::new(program);
         command
             .args(spec.args)
             .stdin(std::process::Stdio::piped())

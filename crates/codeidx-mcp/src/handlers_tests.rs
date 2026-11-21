@@ -52,13 +52,15 @@ fn text_of(result: Result<ToolPayload, ToolError>) -> String {
 
 #[test]
 fn mount_returns_real_stats_json() {
-    let root = temp_project("mount-json");
-    let value = json_of(mount_project(&json!({"path": root})));
+    let root = temp_project("mount-json space 中文");
+    let canonical = fs::canonicalize(&root).expect("canonical fixture root");
+    let value = json_of(mount_project(&json!({"path": canonical})));
     assert_eq!(value["mounted"], true);
     assert_eq!(value["files"], 6, "fixture has 6 source files");
     assert!(value["symbols"].as_u64().unwrap() >= 10);
     assert_eq!(value["vector"], false);
-    assert!(value["path"].is_string());
+    assert_eq!(value["path"], canonical.to_str().unwrap());
+    assert_eq!(value["skipped_unsupported"], 2, "Cargo.toml and README.md");
     assert!(value["elapsed_ms"].is_u64());
 
     let list_value = json_of(list_mounted_projects(&Value::Null));
