@@ -65,3 +65,20 @@ awk 'length > 0 && FNR > 1000 { print FILENAME": "FNR" lines"; bad=1 } END { exi
 - 任何仓库修改先建 GitHub Issue，完成后 Lead 从 main 开分支提交 PR 合并（队友共享工作目录，git 操作仅 Lead 执行）。
 - 队友只写自己 crate 目录内文件（写域分离），跨 crate 接口变更须在任务书中申报并由 Lead 评审。
 - 每阶段验收全记录进 `docs/acceptance-log.md`。
+
+## 6. CI 门禁（GitHub Actions，构建阶段触发）
+
+`.github/workflows/ci.yml` 仅 `workflow_dispatch` 手动触发（不在每个 PR 运行），含三个 job：
+
+| job | runner | 覆盖 | 说明 |
+|---|---|---|---|
+| gate | ubuntu-latest | fmt / clippy `-D warnings` / test / 单文件 ≤1000 行 | 通用门，见 §0 |
+| blackbox | ubuntu-latest | release 构建 + `scripts/bb_phase1.mjs`（§2 全部用例）+ `scripts/bb_phase3.mjs`（§4 全部用例）+ `scripts/bb_phase2.mjs`（§3 全部用例） | 把本地黑盒验收完整性搬进 CI；stdout 纯净性由 bb_client 硬校验 |
+| windows-smoke | windows-latest | release 构建 + `cargo test --workspace` | Windows 交叉验证（优化 #6）：先保证能用；bb 脚本层（node kill / SIGTERM 语义差异）不进本 job |
+
+blackbox job 的模型处理（bb_phase2，bge-small-zh-v1.5 ≈ 90MB）：
+
+- `actions/cache` 缓存 `~/.cache/codeidx-mcp`，key `bge-small-zh-v1.5`；首次运行下载约 90MB，之后命中缓存。
+- 独立「huggingface reachability precheck」step（HEAD 请求 `BAAI/bge-small-zh-v1.5` 的 config.json）：失败即 job 红，不静默跳过；若平台不可达，如实报告并留 TODO。
+
+codeidx-tui（在途开发）：blackbox job 仅预留注释占位 step（`--selftest`），等 Lead 集成后启用。

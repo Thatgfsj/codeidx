@@ -25,3 +25,54 @@ jobs:
             if [ "$n" -gt 1000 ]; then echo "OVERLIMIT $f: $n lines"; bad=1; fi
           done
           exit $bad
+
+  # 黑盒验收完整性（优化菜单 #4）：release 构建后实跑 bb_phase1/3/2。
+  # F1/F3 无模型依赖；F2 走模型缓存 + HuggingFace 可达性预检（失败即红，不静默跳过）。
+  blackbox:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy, rust-analyzer   # bb_phase3 的 LSP 实测必需
+      - uses: Swatinem/rust-cache@v2
+      - name: build release binary
+        run: cargo build --release --bin codeidx-mcp
+      - name: node version (ubuntu 自带)
+        run: node --version
+      - name: bb_phase1 (F1.1-F1.15)
+        run: node scripts/bb_phase1.mjs ./target/release/codeidx-mcp
+      - name: bb_phase3 (F3.1-F3.5)
+        run: node scripts/bb_phase3.mjs ./target/release/codeidx-mcp
+      - name: model cache (bge-small-zh-v1.5)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/codeidx-mcp
+          key: bge-small-zh-v1.5
+      - name: huggingface reachability precheck
+        run: |
+          curl -fsSLI --max-time 30 https://huggingface.co/BAAI/bge-small-zh-v1.5/resolve/main/config.json \
+            || { echo "::error::huggingface.co unreachable; bb_phase2 model download would fail"; exit 1; }
+      - name: bb_phase2 (F2.1-F2.6)
+        run: node scripts/bb_phase2.mjs ./target/release/codeidx-mcp
+      # TODO(tui): Lead 集成 codeidx-tui 后启用 selftest（禁止提前编造）：
+      # - name: tui selftest
+      #   run: |
+      #     cargo build --release --bin codeidx-tui
+      #     ./target/release/codeidx-tui --selftest
+
+  # Windows 交叉验证（优化菜单 #6）：先保证能 build + test。
+  # 首轮预期 unix-only 代码编译失败（tokio::signal::unix / mallopt / /proc 读取），
+  # 报错清单由 Lead 转交修复；bb 脚本层（node kill / SIGTERM 语义差异）不进本 job。
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy, rust-analyzer
+      - uses: Swatinem/rust-cache@v2
+      - name: build release binary
+        run: cargo build --release --bin codeidx-mcp
+      - name: test workspace
+        run: cargo test --workspace
