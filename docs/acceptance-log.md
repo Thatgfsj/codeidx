@@ -52,3 +52,13 @@
 - 审查过程: 会话中断一次（实例崩溃）由 Lead 唤醒恢复；0.52s×2 偶发失败根因修复——warm 信号缺陷（语法级 publishDiagnostics 误当 workspace 就绪，空 definition 被放行），修复为仅实质响应置 warm，5 轮复现循环全绿；grep 模式误报疑云澄清（crate::LSP 静态引用）
 - 申报偏离裁定: a) router lsp stub 保留不可达兼容路径接受（记入待办清理）；b) spawn_reaper 在 serve() 首行（runtime 上下文要求）接受；c/d 接受
 - 结论: **PASS**（Phase 3 全部完成；router lsp stub 清理记入待办）
+
+## 2026-11-21 Phase2 sqlite-vec+fastembed+RRF 混合检索 — teammate-g + Lead
+
+- 交付物: codeidx-store 向量层（embedder.rs 115/vec.rs 324/store.rs 339/搜索改造）+ codeidx-project 挂载管线（resolve_vector 三重判定）+ 根依赖（fastembed rustls 组合/sqlite-vec 0.1）
+- 通用门: fmt=PASS clippy=PASS test=122 passed/0 failed/1 ignored（新增 12 mock 向量单测 + 1 真模型 #[ignore]）；主区集成后一致
+- 关键实证: sqlite-vec auto_extension 进程级注册（Once 幂等）+ vec0 512 维 KNN；fastembed BAAI/bge-small-zh-v1.5 缓存命中免联网；L2=1 归一化 → KNN+cosine 单调一致；真模型中文查询"组合配置生成标记字符串的函数"在 vector/hybrid 双路命中 unicorn_marker_fn（g 冒烟 top8 第4，与探针 margin 预言一致）
+- Lead 追加修复（Phase 2 集成后）: F2.5 降级可见性——store.is_vector_ready() + handlers 未就绪一律降级 keyword 且 mode 回显实际执行模式（原实现回显请求值，客户端无法感知降级）；F1.13 内存门以 release 为准实测 10.3MB<15MB（debug 17MB 为未优化假象，门不修订）；bb_phase2 F2.2 断言按真模型名次校准（top8 内含）
+- 黑盒终验（release 二进制）: bb_phase1 17/17 + bb_phase2 6/6 + bb_phase3 8/8 全绿
+- 审查过程: 磁盘满（根分区）中断一次，用户手动清理解除；g 自救清理 + 探针复现 e 的两个关键结论；三项偏离按预裁定接受（default-features=false、OnceLock 失败不重试、事务后批嵌入+自愈）
+- 结论: **PASS**

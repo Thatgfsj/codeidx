@@ -51,3 +51,12 @@ rusqlite = { version = "0.43.0", features = ["bundled"] }
 # 日志（仅 stderr）
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+# Phase 2 向量检索（Issue #5，探针 /tmp/phase2-probe 实证组合）：
+# - sqlite-vec 0.1.9 无 loadable_path / Connection init，只有 C 符号 +
+#   build.rs 静态编译（SQLITE_CORE），经 rusqlite::ffi::sqlite3_auto_extension
+#   进程级一次注册进 bundled :memory:；
+# - fastembed 7.7 rustls 组合：native-tls 链（openssl-sys）本机无 pkg-config/
+#   libssl-dev 必败；default features 的 image-models 代码检索不需要。
+sqlite-vec = "0.1"
+fastembed = { version = "7.7", default-features = false, features = ["onnx", "hf-hub-rustls-tls", "ort-download-binaries-rustls-tls"] }

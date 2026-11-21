@@ -13,3 +13,11 @@ codeidx-protocol = { workspace = true }
 
 # 存储：FTS5 由 bundled SQLite 内嵌编译默认开启（rusqlite 0.43 无独立 fts5 feature）
 rusqlite = { workspace = true }
+
+# Phase 2 向量层（Issue #5）：sqlite-vec 静态注册 vec0 虚表；
+# fastembed 仅 store 内部使用（bge-small-zh-v1.5，rustls 组合见根 Cargo.toml）。
+sqlite-vec = { workspace = true }
+fastembed = { workspace = true }
+
+# 降级 / 自愈路径的 stderr 日志（ARCHITECTURE §5.8）
+tracing = { workspace = true }
