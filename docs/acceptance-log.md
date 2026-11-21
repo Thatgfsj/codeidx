@@ -43,3 +43,12 @@
 - 实机断言: rust-analyzer 1.98.1（子代理发现本机仅有 rustup shim 缺组件，已 rustup component add 修复）；definition main.rs 调用点→lib.rs:27 端到端；references {28,29,30}=3；idle 2s kill /proc 验证无孤儿；kill_for_root 返回 1；Go 未装报 not found on PATH
 - 审查过程: 8 项申报偏离全部裁定接受（lsp→ast 消费 Lang 已同步 ARCHITECTURE §2、pyright langserver 形态、from_env、冷启动 warmup 重试实证必需、hover 空串、项目外目标保留、start_kill+try_wait 收割、active_lsps 二进制名）
 - 结论: **PASS**（Phase 3 第二步接线待派）
+
+## 2026-11-21 Phase3-第二步 LSP 工具接线与生命周期集成 — teammate-f
+
+- 交付物: main.rs(+6 全局 LazyLock 桥)/server.rs(+29 async 分流+spawn_reaper+kill_all)/handlers.rs(+195 lsp_dispatch 三实现+unmount 真值 killed_lsps+list lsps)/bridge.rs(+15 kill_all)/client.rs warm 修复；scripts/bb_phase3.mjs（Lead）
+- 通用门: fmt=PASS clippy=PASS test=110 passed/0 failed；主区集成后同样全绿
+- 黑盒: bb_phase3 8/8（F3.0–F3.5 全含：definition 跳转/references 集/unmount kill 无孤儿/idle reaper 8s 杀净/未装语言优雅报错/stdout 纯净）；bb_phase1 回归 17/17（SIGTERM kill_all 路径 + 空闲 VmRSS 8.5MB<15MB 不回归）
+- 审查过程: 会话中断一次（实例崩溃）由 Lead 唤醒恢复；0.52s×2 偶发失败根因修复——warm 信号缺陷（语法级 publishDiagnostics 误当 workspace 就绪，空 definition 被放行），修复为仅实质响应置 warm，5 轮复现循环全绿；grep 模式误报疑云澄清（crate::LSP 静态引用）
+- 申报偏离裁定: a) router lsp stub 保留不可达兼容路径接受（记入待办清理）；b) spawn_reaper 在 serve() 首行（runtime 上下文要求）接受；c/d 接受
+- 结论: **PASS**（Phase 3 全部完成；router lsp stub 清理记入待办）

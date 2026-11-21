@@ -23,11 +23,13 @@ type Reply = Result<Value, String>;
 
 /// 冷启动"暂无结果"的重试预算与轮询间隔。
 ///
-/// rust-analyzer 在 workspace 加载完成前对 definition / references 返回
-/// 空数组、对 hover 返回 null，且状态切换瞬间可能以 `content modified`
-/// 取消在途请求（实机探针：didOpen 后约 10s 内就绪）。一旦本进程取得过
-/// 实质响应（warm）或见过首批 publishDiagnostics，空结果即按真实答案
-/// 即时返回。
+/// rust-analyzer 在 workspace（crate graph）加载完成前对 definition /
+/// references 返回空数组、对 hover 返回 null，且状态切换瞬间可能以
+/// `content modified` 取消在途请求（实机探针：didOpen 后约 10s 内就绪）。
+/// 注意 didOpen 后的语法级 publishDiagnostics 会更早到达（毫秒级），
+/// 不代表 workspace 就绪，不能当作 warm 信号（实测曾因此把加载中的
+/// 空结果误判为真实答案）。warm 只由"取得过实质响应"置位；didOpen /
+/// didChange 使分析状态失效并重新清 cold。
 const WARMUP_BUDGET: Duration = Duration::from_secs(20);
 const WARMUP_POLL: Duration = Duration::from_millis(500);
 const CONTENT_MODIFIED_RETRY: Duration = Duration::from_millis(200);
@@ -88,7 +90,6 @@ impl LspProcess {
             stdout,
             Arc::clone(&pending),
             Arc::clone(&stdin),
-            Arc::clone(&warm),
         ));
 
         let proc = Arc::new(Self {
@@ -304,14 +305,15 @@ impl LspProcess {
     }
 }
 
-/// stdout 泵：按 id 回填 pending；服务器请求一律回 null；通知仅记录，
-/// 其中首个 publishDiagnostics 批次把进程标记为 warm（rust-analyzer
-/// 实测：诊断到达后语义请求即时可用）。
+/// stdout 泵：按 id 回填 pending；服务器请求一律回 null；通知仅记录。
+///
+/// 注意：publishDiagnostics（尤其 didOpen 后毫秒级到达的语法级诊断）
+/// 不能作为 workspace 就绪信号，warm 只由实质响应置位（见
+/// request_until_meaningful）。
 async fn pump_stdout(
     stdout: ChildStdout,
     pending: Arc<DashMap<i64, oneshot::Sender<Reply>>>,
     stdin: Arc<AsyncMutex<ChildStdin>>,
-    warm: Arc<AtomicBool>,
 ) {
     let mut reader = BufReader::new(stdout);
     loop {
@@ -328,9 +330,6 @@ async fn pump_stdout(
                     let _ = proto::write_frame(&mut *w, &reply).await;
                 }
                 None => {
-                    if method == "textDocument/publishDiagnostics" {
-                        warm.store(true, Ordering::SeqCst);
-                    }
                     tracing::debug!(method, "server notification");
                 }
             }

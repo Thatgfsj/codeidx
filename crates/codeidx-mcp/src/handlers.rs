@@ -5,16 +5,17 @@
 //!   `with_project` 拿上下文后调用 ast / store 真引擎；
 //! - lsp_*：LSP 桥由 Phase 3 交付，无条件返回硬文案（契约不变）。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use codeidx_ast::repo_map;
+use codeidx_ast::{detect_lang, repo_map, Lang};
 use codeidx_protocol::tools::{
-    FileOutline, MountParams, OutlineParams, PathParams, ProjectsReport, ReadSymbolParams,
-    RepoMapParams, SearchMode, SearchParams, SearchResult,
+    FileOutline, HoverReport, Location, LocationsReport, LspPositionParams, MountParams,
+    OutlineParams, PathParams, ProjectsReport, ReadSymbolParams, RepoMapParams, SearchMode,
+    SearchParams, SearchResult,
 };
 use codeidx_protocol::{ToolError, ToolPayload};
 
@@ -39,18 +40,24 @@ pub fn mount_project(args: &Value) -> Result<ToolPayload, ToolError> {
     Ok(report_to_value(&report))
 }
 
-/// unmount_project：摘除上下文（store 随之 drop，内存即释放）。
+/// unmount_project：摘除上下文（store 随之 drop，内存即释放），
+/// 并 SIGKILL 该 root 关联的全部 LSP 子进程（F3.4，报告真值）。
 pub fn unmount_project(args: &Value) -> Result<ToolPayload, ToolError> {
     let params: PathParams = parse_args(args)?;
-    let report = MANAGER.unmount(Path::new(&params.path))?;
+    let root = Path::new(&params.path);
+    let mut report = MANAGER.unmount(root)?;
+    report.killed_lsps = crate::LSP.kill_for_root(root) as u32;
     Ok(report_to_value(&report))
 }
 
-/// list_mounted_projects：manager.list 汇总（无参数，忽略 arguments）。
+/// list_mounted_projects：manager.list 汇总 + LSP 桥的活动服务器名
+/// （无参数，忽略 arguments）。
 pub fn list_mounted_projects(_args: &Value) -> Result<ToolPayload, ToolError> {
-    Ok(report_to_value(&ProjectsReport {
-        projects: MANAGER.list(),
-    }))
+    let mut projects = MANAGER.list();
+    for info in &mut projects {
+        info.lsps = crate::LSP.active_lsps(Path::new(&info.path));
+    }
+    Ok(report_to_value(&ProjectsReport { projects }))
 }
 
 /// sync_project：mtime/size 快筛 + blake3 复核的增量重建。
@@ -134,19 +141,129 @@ pub fn read_symbol(args: &Value) -> Result<ToolPayload, ToolError> {
     })
 }
 
-/// lsp_definition：LSP 桥由 Phase 3 交付，此前无条件报不可用。
+// ------------------------------------------------------------------ LSP --
+// Phase 3 接线：lsp_* 是 async 语义请求（LSP 子进程往返，冷启动秒级），
+// server.rs 在 tools/call 层按工具名分流到 lsp_dispatch。router 同步表中的
+// lsp 分支仅为兼容保留，运行时不可达（即下面三个同步兜底 stub）。
+
+/// 同步兜底 stub：仅供 router 兼容表引用，运行时不可达（server 层已
+/// async 分流）；文案与 router.rs 的既有 stub 契约测试保持一致。
 pub fn lsp_definition(_args: &Value) -> Result<ToolPayload, ToolError> {
     Err(ToolError::new("LSP bridge not available yet"))
 }
 
-/// lsp_references：同 lsp_definition。
+/// 同步兜底 stub：同 lsp_definition。
 pub fn lsp_references(_args: &Value) -> Result<ToolPayload, ToolError> {
     Err(ToolError::new("LSP bridge not available yet"))
 }
 
-/// lsp_hover：同 lsp_definition。
+/// 同步兜底 stub：同 lsp_definition。
 pub fn lsp_hover(_args: &Value) -> Result<ToolPayload, ToolError> {
     Err(ToolError::new("LSP bridge not available yet"))
+}
+
+/// lsp_* 三工具的 async 分发入口（server 层按名分流到此）。
+pub async fn lsp_dispatch(name: &str, args: &Value) -> Result<ToolPayload, ToolError> {
+    use codeidx_protocol::tools::tool_name;
+    match name {
+        tool_name::LSP_DEFINITION => lsp_definition_async(args).await,
+        tool_name::LSP_REFERENCES => lsp_references_async(args).await,
+        tool_name::LSP_HOVER => lsp_hover_async(args).await,
+        other => Err(ToolError::new(format!("unknown lsp tool: {other}"))),
+    }
+}
+
+/// lsp_* 公共前置：挂载校验 → 语言探测 → 磁盘读全文。
+///
+/// 未挂载 → project not mounted: <path>（与其它工具同文案）；
+/// 扩展名不受支持 → unsupported language for LSP: <file_path>；
+/// 读盘失败 → cannot read file: <file_path>: <原因>。
+async fn lsp_prepare(params: &LspPositionParams) -> Result<(PathBuf, Lang, String), ToolError> {
+    let root = Path::new(&params.path);
+    // 只做挂载校验，不消费索引内容（语义查询以磁盘文件 + LSP 分析为准）。
+    MANAGER.with_project(root, |_| Ok(()))?;
+    let Some(lang) = detect_lang(&params.file_path) else {
+        return Err(ToolError::new(format!(
+            "unsupported language for LSP: {}",
+            params.file_path
+        )));
+    };
+    let text = std::fs::read_to_string(root.join(&params.file_path))
+        .map_err(|e| ToolError::new(format!("cannot read file {}: {e}", params.file_path)))?;
+    Ok((root.to_path_buf(), lang, text))
+}
+
+/// lsp_definition：Location 列表（1-based line、0-based character）。
+async fn lsp_definition_async(args: &Value) -> Result<ToolPayload, ToolError> {
+    let params: LspPositionParams = parse_args(args)?;
+    let (root, lang, text) = lsp_prepare(&params).await?;
+    let locations = crate::LSP
+        .definition(
+            &root,
+            lang,
+            &params.file_path,
+            params.line,
+            params.character,
+            &text,
+        )
+        .await
+        .map_err(|e| ToolError::new(e.to_string()))?;
+    Ok(report_to_value(&LocationsReport {
+        locations: to_protocol_locations(locations),
+    }))
+}
+
+/// lsp_references：引用集（includeDeclaration=false）。
+async fn lsp_references_async(args: &Value) -> Result<ToolPayload, ToolError> {
+    let params: LspPositionParams = parse_args(args)?;
+    let (root, lang, text) = lsp_prepare(&params).await?;
+    let locations = crate::LSP
+        .references(
+            &root,
+            lang,
+            &params.file_path,
+            params.line,
+            params.character,
+            &text,
+        )
+        .await
+        .map_err(|e| ToolError::new(e.to_string()))?;
+    Ok(report_to_value(&LocationsReport {
+        locations: to_protocol_locations(locations),
+    }))
+}
+
+/// lsp_hover：纯文本 contents；无信息时按契约返回空串。
+async fn lsp_hover_async(args: &Value) -> Result<ToolPayload, ToolError> {
+    let params: LspPositionParams = parse_args(args)?;
+    let (root, lang, text) = lsp_prepare(&params).await?;
+    let contents = crate::LSP
+        .hover(
+            &root,
+            lang,
+            &params.file_path,
+            params.line,
+            params.character,
+            &text,
+        )
+        .await
+        .map_err(|e| ToolError::new(e.to_string()))?;
+    Ok(report_to_value(&HoverReport {
+        contents: Value::String(contents),
+    }))
+}
+
+/// 桥 Location → 协议 DTO（行号约定一致：1-based line、0-based character、
+/// 根相对路径）。
+fn to_protocol_locations(locations: Vec<codeidx_lsp::Location>) -> Vec<Location> {
+    locations
+        .into_iter()
+        .map(|l| Location {
+            file: l.file,
+            line: l.line,
+            character: l.character,
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -398,15 +515,93 @@ mod tests {
         unmount_project(&json!({"path": root})).expect("unmount");
     }
 
-    #[test]
-    fn lsp_tools_unconditionally_unavailable() {
-        for result in [
-            lsp_definition(&Value::Null),
-            lsp_references(&Value::Null),
-            lsp_hover(&Value::Null),
-        ] {
-            let err = result.expect_err("lsp stub must fail");
-            assert_eq!(err.message, "LSP bridge not available yet");
+    /// Phase 3 重接线：旧硬文案不复存在，错误路径走真实校验。
+    #[tokio::test]
+    async fn lsp_error_paths_require_mount_lang_and_server() {
+        // 1) 未挂载。
+        let missing = "/tmp/codeidx-mcp-test-not-mounted-lsp-xyz";
+        let err = lsp_dispatch(
+            "lsp_definition",
+            &json!({"path": missing, "file_path": "src/a.rs", "line": 1, "character": 0}),
+        )
+        .await
+        .expect_err("unmounted must fail");
+        assert!(err.message.contains("not mounted"), "{:?}", err.message);
+
+        // 2) 已挂载但扩展名不是 LSP 支持语言。
+        let root = temp_project("lsp-err");
+        mount_project(&json!({ "path": root })).expect("mount");
+        let err = lsp_dispatch(
+            "lsp_definition",
+            &json!({"path": root, "file_path": "README.md", "line": 1, "character": 0}),
+        )
+        .await
+        .expect_err(".md is not an LSP language");
+        assert!(
+            err.message
+                .contains("unsupported language for LSP: README.md"),
+            "{:?}",
+            err.message
+        );
+
+        // 3) 支持的语言但本机未装对应服务器（Python：basedpyright /
+        //    pyright 均未装，F3.5 同型断言；装有则本条会失败，与
+        //    bb_phase3 的 F3.5 同命运）。
+        let err = lsp_dispatch(
+            "lsp_definition",
+            &json!({"path": root, "file_path": "app.py", "line": 1, "character": 0}),
+        )
+        .await
+        .expect_err("python server missing on this machine");
+        assert!(
+            err.message.contains("not found on PATH"),
+            "{:?}",
+            err.message
+        );
+        // 全程未拉起任何子进程：unmount 应报 killed_lsps=0。
+        let value = json_of(unmount_project(&json!({ "path": root })));
+        assert_eq!(value["killed_lsps"], 0, "no server spawned");
+    }
+
+    /// 轻量接线冒烟：async 分发 → 真机 rust-analyzer definition 命中
+    /// 目标定位；unmount 报告真值 killed_lsps=1（F3.4）。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn lsp_dispatch_smoke_definition_on_real_rust_analyzer() {
+        let root = temp_project("lsp-smoke");
+        mount_project(&json!({ "path": root })).expect("mount");
+        let main_text = fs::read_to_string(root.join("src/main.rs")).expect("read main.rs");
+        let mut call_line = 0u32;
+        let mut call_char = 0u32;
+        for (i, line) in main_text.lines().enumerate() {
+            if line.contains("unicorn_marker_fn(&cfg)") {
+                call_line = (i + 1) as u32;
+                call_char = line.find("unicorn_marker_fn").expect("marker col") as u32;
+                break;
+            }
         }
+        assert!(call_line > 0, "fixture marker present");
+
+        let payload = lsp_dispatch(
+            "lsp_definition",
+            &json!({
+                "path": root,
+                "file_path": "src/main.rs",
+                "line": call_line,
+                "character": call_char,
+            }),
+        )
+        .await
+        .expect("definition via real rust-analyzer");
+        let value = json_of(Ok(payload));
+        let locations = value["locations"].as_array().expect("locations array");
+        assert!(
+            locations
+                .iter()
+                .any(|l| l["file"] == "src/lib.rs" && l["line"] == 27),
+            "jumps to src/lib.rs:27, got {locations:?}"
+        );
+
+        let un = json_of(unmount_project(&json!({ "path": root })));
+        assert_eq!(un["killed_lsps"], 1, "one rust-analyzer reaped");
     }
 }

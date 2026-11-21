@@ -1,7 +1,7 @@
 //! codeidx-mcp —— 全局按需挂载的代码索引 MCP 服务（stdio JSON-RPC）。
 //!
-//! Phase 1-B 交付：8 个非 LSP 工具接线真 ProjectManager（本文件的全局单例）；
-//! lsp_* 三工具保持硬文案（Phase 3 交付）。
+//! Phase 3 接线：lsp_* 三工具走真 LSP 桥（本文件 LSP 单例）；
+//! 其余 8 个工具接线真 ProjectManager（本文件 MANAGER 单例）。
 //!
 //! 红线（ARCHITECTURE §4）：stdout 只允许 JSON-RPC 协议字节，
 //! 一切日志 / tracing 一律走 stderr。
@@ -10,14 +10,20 @@ mod handlers;
 mod router;
 mod server;
 
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
+use codeidx_lsp::LspBridge;
 use codeidx_project::ProjectManager;
 use tracing_subscriber::EnvFilter;
 
 /// 全局唯一项目管理器：全部工具 handler 共享（Issue #2 接线契约）。
 /// LazyLock 首次访问时才构建空挂载表，不增加空闲 RSS（F1.13 门）。
 pub(crate) static MANAGER: LazyLock<ProjectManager> = LazyLock::new(ProjectManager::new);
+
+/// 全局唯一 LSP 桥：lsp_* 三工具与 unmount / list 生命周期共享（Phase 3
+/// 接线契约）。idle 阈值来自环境变量 CODEIDX_LSP_IDLE_SECS（默认 300
+/// 秒）；空桥只有一张空 DashMap，不增加空闲 RSS（F1.13 门）。
+pub(crate) static LSP: LazyLock<Arc<LspBridge>> = LazyLock::new(|| Arc::new(LspBridge::from_env()));
 
 fn main() {
     // 日志初始化：显式绑定 stderr writer，绝不触碰 stdout。
