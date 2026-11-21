@@ -32,6 +32,13 @@ pub(crate) fn language_id(lang: Lang) -> &'static str {
         Lang::Java => "java",
         Lang::C => "c",
         Lang::Cpp => "cpp",
+        // 扩展语言包交付（teammates c/a/d）时补真实 languageId；
+        // 交付前 lsp 路径不可达（detect_lang 未映射扩展名）。
+        Lang::Dart => "dart",
+        Lang::Kotlin => "kotlin",
+        Lang::CSharp => "csharp",
+        Lang::Php => "php",
+        Lang::Html => "html",
     }
 }
 
@@ -41,14 +48,19 @@ static SERVER_TS: [ServerSpec; 2] = [
     ServerSpec::new("typescript-language-server", &["--stdio"]),
 ];
 /// Python：basedpyright / pyright 的 LSP 形态是各自的 `-langserver`
-/// 入口（裸 CLI 是诊断工具、不 speak LSP）；两者默认 stdio。
+/// 入口（裸 CLI 是诊断工具、不 speak LSP）；两者都需要显式 `--stdio`
+/// 参数（basedpyright 1.40 实测：缺参会以 "Connection input stream is
+/// not set" 退出）。
 static SERVER_PY: [ServerSpec; 2] = [
-    ServerSpec::new("basedpyright-langserver", &[]),
-    ServerSpec::new("pyright-langserver", &[]),
+    ServerSpec::new("basedpyright-langserver", &["--stdio"]),
+    ServerSpec::new("pyright-langserver", &["--stdio"]),
 ];
 static SERVER_GO: [ServerSpec; 1] = [ServerSpec::new("gopls", &[])];
 static SERVER_JAVA: [ServerSpec; 1] = [ServerSpec::new("jdtls", &[])];
 static SERVER_C: [ServerSpec; 1] = [ServerSpec::new("clangd", &[])];
+
+/// 占位空表：扩展语言包交付前的探测表（交付时替换为真实候选）。
+static SERVER_NONE: [ServerSpec; 0] = [];
 
 /// 探测表：按候选顺序取第一个 PATH 命中的二进制。
 pub(crate) fn server_candidates(lang: Lang) -> &'static [ServerSpec] {
@@ -59,6 +71,14 @@ pub(crate) fn server_candidates(lang: Lang) -> &'static [ServerSpec] {
         Lang::Go => &SERVER_GO,
         Lang::Java => &SERVER_JAVA,
         Lang::C | Lang::Cpp => &SERVER_C,
+        // 扩展语言的服务器探测表由语言包任务交付时补（c: dart /
+        // a: csharp,php / d: kotlin；html 无 LSP 恒空表）；交付前 lsp
+        // 路径不可达。dart 的真实探测名 dart language-server。
+        Lang::Dart => &SERVER_NONE,
+        Lang::Kotlin => &SERVER_NONE,
+        Lang::CSharp => &SERVER_NONE,
+        Lang::Php => &SERVER_NONE,
+        Lang::Html => &SERVER_NONE,
     }
 }
 

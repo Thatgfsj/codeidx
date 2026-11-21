@@ -59,6 +59,8 @@ awk 'length > 0 && FNR > 1000 { print FILENAME": "FNR" lines"; bad=1 } END { exi
 | F3.3 | CODEIDX_LSP_IDLE_SECS=10 | 10s 后 rust-analyzer 进程被 kill |
 | F3.4 | unmount_project | 关联 rust-analyzer 进程消失（无孤儿） |
 | F3.5 | 未装某语言 LSP 时调用 | isError 优雅提示，不崩溃 |
+| F3.6 | lsp_definition(polyglot app.py 构造调用) | 跳 models.py 类定义行（basedpyright-langserver --stdio） |
+| F3.7 | lsp_references(polyglot types.go 方法) | 引用集含 main.go 调用行（gopls，需 workspaceFolders + PATH 上有 go） |
 
 ## 5. 流程规范
 
@@ -68,17 +70,4 @@ awk 'length > 0 && FNR > 1000 { print FILENAME": "FNR" lines"; bad=1 } END { exi
 
 ## 6. CI 门禁（GitHub Actions，构建阶段触发）
 
-`.github/workflows/ci.yml` 仅 `workflow_dispatch` 手动触发（不在每个 PR 运行），含三个 job：
-
-| job | runner | 覆盖 | 说明 |
-|---|---|---|---|
-| gate | ubuntu-latest | fmt / clippy `-D warnings` / test / 单文件 ≤1000 行 | 通用门，见 §0 |
-| blackbox | ubuntu-latest | release 构建 + `scripts/bb_phase1.mjs`（§2 全部用例）+ `scripts/bb_phase3.mjs`（§4 全部用例）+ `scripts/bb_phase2.mjs`（§3 全部用例） | 把本地黑盒验收完整性搬进 CI；stdout 纯净性由 bb_client 硬校验 |
-| windows-smoke | windows-latest | release 构建 + `cargo test --workspace` | Windows 交叉验证（优化 #6）：先保证能用；bb 脚本层（node kill / SIGTERM 语义差异）不进本 job |
-
-blackbox job 的模型处理（bb_phase2，bge-small-zh-v1.5 ≈ 90MB）：
-
-- `actions/cache` 缓存 `~/.cache/codeidx-mcp`，key `bge-small-zh-v1.5`；首次运行下载约 90MB，之后命中缓存。
-- 独立「huggingface reachability precheck」step（HEAD 请求 `BAAI/bge-small-zh-v1.5` 的 config.json）：失败即 job 红，不静默跳过；若平台不可达，如实报告并留 TODO。
-
-codeidx-tui（在途开发）：blackbox job 仅预留注释占位 step（`--selftest`），等 Lead 集成后启用。
+`.github/workflows/ci.yml` 仅 `workflow_dispatch` 手动触发：`gate`（fmt/clippy/test/行数门，Linux）、`blackbox`（release 构建 + bb_phase1/bb_phase3 + 模型缓存 bb_phase2 + TUI selftest 占位）、`windows-smoke`（windows-latest 构建 + 测试，跨平台基线）。Windows 需 MSVC 工具链（GNU 目标 ort-sys 无预编译）且 Windows SDK ≥ 10.0.19041（DXCORE.lib）。

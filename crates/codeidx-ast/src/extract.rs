@@ -175,6 +175,12 @@ impl<'a> Extractor<'a> {
             Lang::Java => self.handle_java_def(node, kind, parent),
             Lang::C => self.handle_c_def(node, kind),
             Lang::Cpp => self.handle_cpp_def(node, kind, parent),
+            // 五门扩展语言的 def 提取由并行语言包任务交付
+            // （teammates c/a/d）；交付前 detect_lang 未映射对应扩展名，
+            // 本分支运行时不可达。
+            Lang::Dart | Lang::Kotlin | Lang::CSharp | Lang::Php | Lang::Html => {
+                unreachable!("extractor for {:?} not yet delivered", self.lang)
+            }
         }
     }
 

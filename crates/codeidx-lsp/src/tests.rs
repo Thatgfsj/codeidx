@@ -407,3 +407,128 @@ async fn missing_language_server_is_a_clean_error() {
     assert!(bridge.active_lsps(&root).is_empty());
     let _ = fs::remove_dir_all(&root);
 }
+
+/// F3.6/F3.7 对型：basedpyright 与 gopls 在 polyglot fixture 副本上的
+/// 多语言语义实测；服务器缺失的环境自动跳过（探测失败即跳）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn polyglot_python_and_go_semantics() {
+    let root = std::env::temp_dir().join(format!("codeidx-lsp-poly-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    copy_dir(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/polyglot-project"),
+        &root,
+    );
+
+    let app_rel = "app.py";
+    let models_rel = "models.py";
+    let main_rel = "main.go";
+    let types_rel = "types.go";
+    let app_text = fs::read_to_string(root.join(app_rel)).unwrap();
+    let models_text = fs::read_to_string(root.join(models_rel)).unwrap();
+    let main_text = fs::read_to_string(root.join(main_rel)).unwrap();
+    let types_text = fs::read_to_string(root.join(types_rel)).unwrap();
+
+    // 动态定位锚点并与 fixture 手工标注交叉验证。
+    let (py_call_line, py_call_char) = find_pos(&app_text, "GoldWidget(", "");
+    assert_eq!(py_call_line, 7, "app.py 构造调用行");
+    let (py_class_line, _) = find_pos(&models_text, "class GoldWidget", "");
+    assert_eq!(py_class_line, 4, "models.py 类定义行");
+    // references 光标必须落在类名上（列 6），落在 class 关键字上会得到空集。
+    let py_class_char = column_in_line(&models_text, py_class_line, "GoldWidget");
+    assert_eq!(py_class_char, 6);
+    let (go_call_line, go_call_char) = find_pos(&main_text, "NewWidget(", "");
+    assert_eq!(go_call_line, 7, "main.go 构造调用行");
+    let (go_def_line, _) = find_pos(&types_text, "func NewWidget", "");
+    assert_eq!(go_def_line, 13, "types.go NewWidget 定义行");
+    let go_method_char = column_in_line(&types_text, 18, "Describe");
+    let go_use_line = find_pos(&main_text, "w.Describe()", "").0;
+    assert_eq!(go_use_line, 12, "main.go Describe 引用行");
+    let py_hover_char = column_in_line(&models_text, 11, "describe");
+
+    let bridge = Arc::new(LspBridge::new(300));
+
+    // Python / basedpyright：definition 构造调用 → 类定义；references
+    // 引用集（import / 构造 / 注解 ≥3）；hover 方法签名。
+    if detect_server(Lang::Python).is_ok() {
+        let defs = bridge
+            .definition(
+                &root,
+                Lang::Python,
+                app_rel,
+                py_call_line,
+                py_call_char,
+                &app_text,
+            )
+            .await
+            .unwrap();
+        assert!(
+            defs.iter()
+                .any(|l| l.file == models_rel && l.line == py_class_line),
+            "py definition 应跳 models.py:{py_class_line}，实测 {defs:?}"
+        );
+        let refs = bridge
+            .references(
+                &root,
+                Lang::Python,
+                models_rel,
+                py_class_line,
+                py_class_char,
+                &models_text,
+            )
+            .await
+            .unwrap();
+        assert!(
+            refs.len() >= 3,
+            "类引用应含 import/构造/注解 ≥3 处，实测 {refs:?}"
+        );
+        let hover = bridge
+            .hover(
+                &root,
+                Lang::Python,
+                models_rel,
+                11,
+                py_hover_char,
+                &models_text,
+            )
+            .await
+            .unwrap();
+        assert!(
+            !hover.is_empty() && hover.contains("describe"),
+            "hover 应含方法签名，实测: {hover}"
+        );
+    }
+
+    // Go / gopls：definition 构造调用 → 构造函数定义；references 方法引用。
+    if detect_server(Lang::Go).is_ok() {
+        let defs = bridge
+            .definition(
+                &root,
+                Lang::Go,
+                main_rel,
+                go_call_line,
+                go_call_char,
+                &main_text,
+            )
+            .await
+            .unwrap();
+        assert!(
+            defs.iter()
+                .any(|l| l.file == types_rel && l.line == go_def_line),
+            "go definition 应跳 types.go:{go_def_line}，实测 {defs:?}"
+        );
+        let refs = bridge
+            .references(&root, Lang::Go, types_rel, 18, go_method_char, &types_text)
+            .await
+            .unwrap();
+        assert!(
+            refs.iter()
+                .any(|l| l.file == main_rel && l.line == go_use_line),
+            "go references 应含 main.go:{go_use_line}，实测 {refs:?}"
+        );
+    }
+
+    // 生命周期：回收已拉起的服务器（0/1/2 取决于环境安装情况）。
+    let killed = bridge.kill_for_root(&root);
+    assert!(killed <= 2, "至多 py + go 两个进程");
+    fs::remove_dir_all(&root).unwrap();
+}
