@@ -31,7 +31,7 @@ awk 'length > 0 && FNR > 1000 { print FILENAME": "FNR" lines"; bad=1 } END { exi
 | F1.6 | get_file_outline(已知文件) | 符号 kind/name/行号与 fixture 手工标注一致 |
 | F1.7 | search_code(mode=keyword, 唯一函数名) | 命中该函数，start/end 行号正确 |
 | F1.8 | read_symbol(已知函数) | code 与 fixture 文本逐字节一致 |
-| F1.9 | 改 1 增 1 删 1 文件后 sync_project | added=1 modified=1 removed=1；后续检索反映变更 |
+| F1.9 | 关闭 auto_sync，改 1 增 1 删 1 文件后 sync_project | added=1 modified=1 removed=1；后续检索反映变更 |
 | F1.10 | unmount_project | list 不再含该 path |
 | F1.11 | 对未挂载路径 get_repo_map | isError=true，message 含 "not mounted" |
 | F1.12 | mount 后立即 SIGTERM | 退出干净，无孤儿子进程 |

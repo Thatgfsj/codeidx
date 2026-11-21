@@ -59,6 +59,9 @@ pub struct MountParams {
     /// 是否启用向量检索（懒加载 embedding 模型）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enable_vector: Option<bool>,
+    /// 是否监听文件系统并自动更新索引（默认 true）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_sync: Option<bool>,
 }
 
 /// 仅需 path 的工具参数（unmount_project / sync_project）。
@@ -509,12 +512,15 @@ mod tests {
     #[test]
     fn mount_params_parse_snake_case_and_default() {
         let params: MountParams =
-            serde_json::from_str(r#"{"path":"/repo","enable_vector":true}"#).unwrap();
+            serde_json::from_str(r#"{"path":"/repo","enable_vector":true,"auto_sync":false}"#)
+                .unwrap();
         assert_eq!(params.path, "/repo");
         assert_eq!(params.enable_vector, Some(true));
+        assert_eq!(params.auto_sync, Some(false));
 
         let minimal: MountParams = serde_json::from_str(r#"{"path":"/r"}"#).unwrap();
         assert_eq!(minimal.enable_vector, None);
+        assert_eq!(minimal.auto_sync, None);
         round_trip(&minimal);
     }
 

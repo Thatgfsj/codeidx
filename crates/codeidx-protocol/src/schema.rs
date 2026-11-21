@@ -34,8 +34,8 @@ impl ToolSpec {
 pub const TOOL_SPECS: [ToolSpec; 11] = [
     ToolSpec {
         name: tool_name::MOUNT_PROJECT,
-        description: "挂载项目并在内存中构建索引；其余工具仅对已挂载项目可用。",
-        schema_json: r#"{"type":"object","properties":{"path":{"type":"string","description":"项目根目录的绝对路径"},"enable_vector":{"type":"boolean","description":"是否启用向量检索（懒加载 embedding 模型）","default":false}},"required":["path"]}"#,
+        description: "挂载项目并在内存中构建索引，默认监听文件变更自动同步；其余工具仅对已挂载项目可用。",
+        schema_json: r#"{"type":"object","properties":{"path":{"type":"string","description":"项目根目录的绝对路径"},"enable_vector":{"type":"boolean","description":"是否启用向量检索（懒加载 embedding 模型）","default":false},"auto_sync":{"type":"boolean","description":"是否监听文件变更并自动同步索引","default":true}},"required":["path"]}"#,
     },
     ToolSpec {
         name: tool_name::UNMOUNT_PROJECT,
@@ -145,6 +145,9 @@ mod tests {
             .collect();
 
         assert!(schemas[tool_name::MOUNT_PROJECT].contains("\"enable_vector\""));
+        let mount =
+            serde_json::from_str::<serde_json::Value>(schemas[tool_name::MOUNT_PROJECT]).unwrap();
+        assert_eq!(mount["properties"]["auto_sync"]["default"], true);
         assert!(schemas[tool_name::GET_REPO_MAP].contains("\"focus_files\""));
         assert!(schemas[tool_name::GET_REPO_MAP].contains("\"token_budget\""));
         assert!(schemas[tool_name::SEARCH_CODE].contains("\"top_k\""));

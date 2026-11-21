@@ -34,7 +34,7 @@
 
 ## 3. 变更后维护
 
-完成一轮文件修改后，索引是旧的：继续跨文件排查前先 `sync_project(path)`，增量反映 added / modified / removed，避免基于过期索引误判。频繁小改可攒一轮再 sync。
+默认挂载会监听文件改动并自动更新索引。需要立即查到刚写入的改动，或挂载时设置了 `auto_sync: false`，可先调用 `sync_project(path)`。
 
 ## 4. 结束纪律
 
@@ -77,6 +77,6 @@ codeidx 工作流（严格按序下钻）：
    （line 1-based、character 0-based；首次调用冷启动 LSP）。
 
 修改后与收尾：
-- 完成一轮修改 → sync_project 后再继续跨文件排查。
+- 索引默认自动更新。需要立即查询改动或已关闭监听时，先 sync_project。
 - 任务完成或切换项目 → unmount_project（释放内存 + 终止 LSP）。
 ```

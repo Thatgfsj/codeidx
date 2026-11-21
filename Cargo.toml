@@ -50,6 +50,8 @@ tree-sitter-html = "0.23.2"
 tree-sitter-kotlin-ng = "1.1.0"
 tree-sitter-c-sharp = "0.24.0"
 
+notify = "8.2.2"
+
 # 存储（FTS5 由 bundled 内嵌编译默认开启，无独立 fts5 feature）
 rusqlite = { version = "0.43.0", features = ["bundled"] }
 

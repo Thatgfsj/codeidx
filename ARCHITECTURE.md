@@ -45,7 +45,7 @@ ast, protocol  // 叶子 crate，无内部依赖
 
 - tokio（rt-multi-thread + io + process + signal）、dashmap、rayon
 - ignore（gitignore 感知遍历）、blake3（内容哈希）
-- Tree-sitter 语法索引：Rust、Python、TypeScript/JavaScript、Go、Java、C/C++、Dart。Dart 的定义和检索不依赖 SDK；精确跳转另需 PATH 上的 `dart language-server`，尚无实机 Dart LSP 验证。
+- Tree-sitter 语法索引：Rust、Python、TypeScript/JavaScript、Go、Java、C/C++、Dart、PHP、HTML、Kotlin、C#。Dart 的定义和检索不依赖 SDK；精确跳转另需 PATH 上的 `dart language-server`，尚无实机 Dart LSP 验证。
 - rusqlite（features = ["bundled", "fts5"]）、sqlite-vec（Phase 2，静态链接）、fastembed（Phase 2，懒加载全局单例）
 - LSP 子进程：tokio::process::Command + stdio JSON-RPC
 
@@ -60,7 +60,7 @@ ast, protocol  // 叶子 crate，无内部依赖
 
 | 工具 | 参数 | 成功返回（紧凑 JSON，省 token） |
 |---|---|---|
-| mount_project | path: string, enable_vector?: bool=false | `{mounted,path,files,symbols,elapsed_ms,mem_est_mb,vector}` |
+| mount_project | path: string, enable_vector?: bool=false, auto_sync?: bool=true | `{mounted,path,files,symbols,elapsed_ms,mem_est_mb,vector}` |
 | unmount_project | path: string | `{unmounted:true,killed_lsps:N}` |
 | list_mounted_projects | — | `{projects:[{path,files,symbols,lsps:[..],vector}]}` |
 | sync_project | path: string | `{added,modified,removed,files,elapsed_ms}` |
