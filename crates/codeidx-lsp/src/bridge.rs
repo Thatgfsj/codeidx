@@ -168,6 +168,21 @@ impl LspBridge {
         names
     }
 
+    /// 进程退出兜底：SIGKILL 全部语言服务器并同步收割，返回 kill 总数
+    /// （serve() 的 shutdown 路径调用，防孤儿）。
+    pub fn kill_all(&self) -> usize {
+        let keys: Vec<ProcKey> = self.procs.iter().map(|entry| entry.key().clone()).collect();
+        let mut killed = 0;
+        for key in keys {
+            if let Some((_, proc)) = self.procs.remove(&key) {
+                tracing::info!(binary = proc.binary, "language server killed on shutdown");
+                proc.kill_now();
+                killed += 1;
+            }
+        }
+        killed
+    }
+
     /// idle 回收：后台任务周期扫描，最后使用距今超过 idle_secs 的进程
     /// SIGKILL + 收割；扫描周期 `max(1, idle_secs / 4)` 秒。
     ///
