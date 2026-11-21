@@ -17,6 +17,8 @@ use crate::types::{Lang, SymbolDef, SymbolKind, SymbolRef};
 
 /// C / C++ 定义提取拆分至子模块 clang（见 extract/clang.rs）。
 mod clang;
+mod html;
+mod php;
 
 /// 提取单文件的符号与引用；任何失败返回空集，不 panic。
 pub(crate) fn extract(lang: Lang, rel_path: &str, text: &str) -> (Vec<SymbolDef>, Vec<SymbolRef>) {
@@ -132,6 +134,8 @@ impl<'a> Extractor<'a> {
     /// 节点是否充当"容器"（其子树内的定义要挂 parent）。
     fn container_host(&mut self, node: Node) -> Option<String> {
         match (self.lang, node.kind()) {
+            (Lang::Php, _) => self.php_container(node),
+            (Lang::Html, _) => self.html_container(node),
             (Lang::Rust, "trait_item") => self.name_text(node),
             (Lang::Rust, "impl_item") => node
                 .child_by_field_name("type")
@@ -180,10 +184,9 @@ impl<'a> Extractor<'a> {
             Lang::C => self.handle_c_def(node, kind),
             Lang::Cpp => self.handle_cpp_def(node, kind, parent),
             Lang::Dart => self.handle_dart_def(node, kind, parent),
-            // 四门扩展语言的 def 提取由并行语言包任务交付
-            // （teammates a/d）；交付前 detect_lang 未映射对应扩展名，
-            // 本分支运行时不可达。
-            Lang::Kotlin | Lang::CSharp | Lang::Php | Lang::Html => {
+            Lang::Php => self.handle_php_def(node, parent),
+            Lang::Html => self.handle_html_def(node, parent),
+            Lang::Kotlin | Lang::CSharp => {
                 unreachable!("extractor for {:?} not yet delivered", self.lang)
             }
         }
@@ -703,28 +706,10 @@ impl<'a> Extractor<'a> {
     }
 
     fn try_ref(&mut self, node: Node) {
-        let kind = node.kind();
-        let name: Option<String> = match kind {
-            "call_expression" | "call" | "method_invocation" => {
-                let f = node
-                    .child_by_field_name("function")
-                    .or_else(|| node.child_by_field_name("name"));
-                f.and_then(|fn_node| self.callee_base(fn_node))
-            }
-            "field_expression"
-            | "member_expression"
-            | "attribute"
-            | "selector_expression"
-            | "field_access" => {
-                let f = node
-                    .child_by_field_name("field")
-                    .or_else(|| node.child_by_field_name("property"))
-                    .or_else(|| node.child_by_field_name("attribute"))
-                    .or_else(|| node.child_by_field_name("name"));
-                f.map(|n| self.text_of(n))
-            }
-            "type_identifier" => Some(self.text_of(node)),
-            _ => None,
+        let name = match self.lang {
+            Lang::Php => self.php_ref(node),
+            Lang::Html => None,
+            _ => self.generic_ref(node),
         };
         let Some(name) = name else { return };
         if is_reserved(&name) {
@@ -746,6 +731,31 @@ impl<'a> Extractor<'a> {
             rel_path: self.rel_path.to_string(),
             line,
         });
+    }
+
+    fn generic_ref(&self, node: Node) -> Option<String> {
+        match node.kind() {
+            "call_expression" | "call" | "method_invocation" => {
+                let f = node
+                    .child_by_field_name("function")
+                    .or_else(|| node.child_by_field_name("name"));
+                f.and_then(|fn_node| self.callee_base(fn_node))
+            }
+            "field_expression"
+            | "member_expression"
+            | "attribute"
+            | "selector_expression"
+            | "field_access" => {
+                let f = node
+                    .child_by_field_name("field")
+                    .or_else(|| node.child_by_field_name("property"))
+                    .or_else(|| node.child_by_field_name("attribute"))
+                    .or_else(|| node.child_by_field_name("name"));
+                f.map(|n| self.text_of(n))
+            }
+            "type_identifier" => Some(self.text_of(node)),
+            _ => None,
+        }
     }
 
     /// 调用目标的基名：utils::helper_spinner -> helper_spinner。

@@ -9,7 +9,7 @@ use crate::types::Lang;
 
 /// 按文件扩展名推断语言。
 ///
-/// 覆盖 `.rs/.py/.ts/.tsx/.js/.jsx/.mjs/.go/.java/.c/.h/.cpp/.cc/.hpp/.dart`；
+/// 覆盖 `.rs/.py/.ts/.tsx/.js/.jsx/.mjs/.go/.java/.c/.h/.cpp/.cc/.hpp/.dart/.php/.html/.htm`；
 /// 其余扩展名返回 `None`。JavaScript 复用 TypeScript 的 TSX 变体解析。
 pub fn detect_lang(path: &str) -> Option<Lang> {
     let ext = path.rsplit('.').next()?;
@@ -27,6 +27,8 @@ pub fn detect_lang(path: &str) -> Option<Lang> {
         "c" | "h" => Some(Lang::C),
         "cpp" | "cc" | "hpp" => Some(Lang::Cpp),
         "dart" => Some(Lang::Dart),
+        "php" => Some(Lang::Php),
+        "html" | "htm" => Some(Lang::Html),
         _ => None,
     }
 }
@@ -44,10 +46,10 @@ pub fn language_of(lang: Lang) -> Language {
         Lang::C => tree_sitter_c::LANGUAGE.into(),
         Lang::Cpp => tree_sitter_cpp::LANGUAGE.into(),
         Lang::Dart => tree_sitter_dart::LANGUAGE.into(),
-        // 四门扩展语言（Kotlin/CSharp/Php/Html）的 grammar 由并行语言包
-        // 任务交付（teammates a/d）；交付前 detect_lang 尚未映射对应扩展
-        // 名，本分支运行时不可达，交付时逐个替换为真实 grammar。
-        Lang::Kotlin | Lang::CSharp | Lang::Php | Lang::Html => {
+        Lang::Php => tree_sitter_php::LANGUAGE_PHP.into(),
+        Lang::Html => tree_sitter_html::LANGUAGE.into(),
+        // 尚未映射扩展名的语言由各自的语言包补齐。
+        Lang::Kotlin | Lang::CSharp => {
             unreachable!("extractor for {lang:?} not yet delivered")
         }
     }
