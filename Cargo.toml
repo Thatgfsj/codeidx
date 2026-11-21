@@ -44,6 +44,7 @@ tree-sitter-go = "0.25.0"
 tree-sitter-java = "0.23.5"
 tree-sitter-c = "0.24.2"
 tree-sitter-cpp = "0.23.4"
+tree-sitter-dart = "0.3.0"
 
 # 存储（FTS5 由 bundled 内嵌编译默认开启，无独立 fts5 feature）
 rusqlite = { version = "0.43.0", features = ["bundled"] }

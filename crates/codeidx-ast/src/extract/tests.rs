@@ -136,3 +136,85 @@ fn signature_is_single_line_and_truncated() {
     assert!(!sym.signature.contains('\n'));
     assert!(sym.signature.chars().count() <= 120);
 }
+
+// ---- Dart 支持（tests/fixtures/dart-project） ----
+
+fn dart_fixture(rel: &str) -> String {
+    let base = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/dart-project/"
+    );
+    std::fs::read_to_string(format!("{base}{rel}")).expect("dart fixture missing")
+}
+
+fn parse_dart_fixture(rel: &str) -> ParsedFile {
+    let text = dart_fixture(rel);
+    parse_file(Lang::Dart, rel, &text)
+}
+
+#[test]
+fn dart_fixture_symbols_kinds_lines_and_parents() {
+    let pf = parse_dart_fixture("lib.dart");
+    let text = dart_fixture("lib.dart");
+
+    let marker = find_symbol(&pf, "dart_unique_marker_fn").expect("marker fn");
+    assert_eq!(marker.kind, SymbolKind::Fn);
+    assert_eq!(marker.parent, None);
+    // 行号与文件实际定义行一致（动态定位，抗格式化漂移）。
+    assert_eq!(
+        marker.start_line,
+        actual_line(&text, "void dart_unique_marker_fn")
+    );
+    assert!(marker
+        .signature
+        .contains("void dart_unique_marker_fn(VaultApp app)"));
+
+    let vault = find_symbol(&pf, "VaultApp").expect("VaultApp");
+    assert_eq!(vault.kind, SymbolKind::Class);
+    assert_eq!(vault.parent, None);
+    let run = find_symbol(&pf, "run").expect("run");
+    assert_eq!(run.kind, SymbolKind::Method);
+    assert_eq!(run.parent, Some("VaultApp".to_string()));
+    assert!(run.signature.contains("int run(int depth)"));
+
+    // mixin → Trait；extension → Other（两项申报映射，见交付报告）。
+    let spin_host = find_symbol(&pf, "Spinnable").expect("Spinnable");
+    assert_eq!(spin_host.kind, SymbolKind::Trait);
+    let spin = find_symbol(&pf, "spin").expect("spin");
+    assert_eq!(spin.kind, SymbolKind::Method);
+    assert_eq!(spin.parent, Some("Spinnable".to_string()));
+
+    let color = find_symbol(&pf, "Color").expect("Color");
+    assert_eq!(color.kind, SymbolKind::Enum);
+    let ext = find_symbol(&pf, "GoldExt").expect("GoldExt");
+    assert_eq!(ext.kind, SymbolKind::Other);
+    let forge = find_symbol(&pf, "forge").expect("forge");
+    assert_eq!(forge.kind, SymbolKind::Method);
+    assert_eq!(forge.parent, Some("GoldExt".to_string()));
+
+    let alias = find_symbol(&pf, "VaultId").expect("VaultId");
+    assert_eq!(alias.kind, SymbolKind::Type);
+    let konst = find_symbol(&pf, "kVaultDepth").expect("kVaultDepth");
+    assert_eq!(konst.kind, SymbolKind::Const);
+}
+
+#[test]
+fn dart_fixture_helper_refs_at_least_three() {
+    let pf = parse_dart_fixture("lib.dart");
+    let count = pf
+        .refs
+        .iter()
+        .filter(|r| r.name == "dart_helper_fn")
+        .count();
+    assert!(count >= 3, "dart_helper_fn refs = {count}");
+    // utils.dart 里的定义本身为顶层 Fn。
+    let utils = parse_dart_fixture("utils.dart");
+    let helper = find_symbol(&utils, "dart_helper_fn").expect("helper fn");
+    assert_eq!(helper.kind, SymbolKind::Fn);
+}
+
+#[test]
+fn dart_garbage_does_not_panic() {
+    let pf = parse_file(Lang::Dart, "a.dart", "{{{{ %%% ))) }");
+    let _ = pf;
+}

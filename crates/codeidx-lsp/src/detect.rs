@@ -61,6 +61,7 @@ static SERVER_C: [ServerSpec; 1] = [ServerSpec::new("clangd", &[])];
 
 /// 占位空表：扩展语言包交付前的探测表（交付时替换为真实候选）。
 static SERVER_NONE: [ServerSpec; 0] = [];
+static SERVER_DART: [ServerSpec; 1] = [ServerSpec::new("dart", &["language-server"])];
 
 /// 探测表：按候选顺序取第一个 PATH 命中的二进制。
 pub(crate) fn server_candidates(lang: Lang) -> &'static [ServerSpec] {
@@ -74,7 +75,7 @@ pub(crate) fn server_candidates(lang: Lang) -> &'static [ServerSpec] {
         // 扩展语言的服务器探测表由语言包任务交付时补（c: dart /
         // a: csharp,php / d: kotlin；html 无 LSP 恒空表）；交付前 lsp
         // 路径不可达。dart 的真实探测名 dart language-server。
-        Lang::Dart => &SERVER_NONE,
+        Lang::Dart => &SERVER_DART,
         Lang::Kotlin => &SERVER_NONE,
         Lang::CSharp => &SERVER_NONE,
         Lang::Php => &SERVER_NONE,
