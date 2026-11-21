@@ -86,7 +86,7 @@ impl ProjectManager {
             symbols,
             elapsed_ms: started.elapsed().as_millis() as u64,
             mem_est_mb: built.mem_est_mb,
-            vector: enable_vector,
+            vector: built.vector,
         })
     }
 

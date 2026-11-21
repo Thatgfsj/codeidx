@@ -318,3 +318,107 @@ fn collect_honors_gitignore() {
 
     fs::remove_dir_all(&root).ok();
 }
+
+// ------------------------------------------------------------------ Phase 2 --
+// 向量挂载管线（Issue #5）：环境变量门禁 + 真模型冒烟（#[ignore]）。
+
+use crate::manager::vm_rss_kb;
+
+/// F2.5：CODEIDX_DISABLE_VECTOR=1 时 mount 一律 vector=false 且不碰模型。
+#[test]
+fn disable_vector_env_forces_fts_only() {
+    std::env::set_var("CODEIDX_DISABLE_VECTOR", "1");
+    let mgr = ProjectManager::new();
+    let report = mgr.mount(&fixture_root(), true).expect("mount");
+    // 先清环境变量再断言：断言失败也不泄漏进程环境。
+    std::env::remove_var("CODEIDX_DISABLE_VECTOR");
+    assert!(report.mounted);
+    assert_eq!(report.files, 6);
+    assert!(!report.vector, "F2.5: 禁用环境变量下 vector 必须为 false");
+    // 挂载正常、检索走纯 FTS5 路径。
+    mgr.with_project(&fixture_root(), |ctx| {
+        assert!(!ctx.store.is_vector_enabled());
+        assert!(!ctx.store.search_keyword("unicorn", 8).unwrap().is_empty());
+        let err = ctx.store.search_vector("unicorn", 8).unwrap_err();
+        assert!(err.message.contains("vector search disabled"), "{err:?}");
+        Ok(())
+    })
+    .expect("with_project");
+    mgr.unmount(&fixture_root()).expect("cleanup");
+}
+
+/// F2.2 冒烟（真模型，#[ignore]）：需 ~/.cache/codeidx-mcp 已有
+/// bge-small-zh-v1.5 缓存（探针已下载 90.5MB，可拷贝；空缓存时首次运行
+/// 联网下载）。中文查询应命中 unicorn_marker_fn（store 层等价调用）。
+///
+/// 手动运行：cargo test -p codeidx-project real_vector -- --ignored --nocapture
+#[test]
+#[ignore = "real fastembed model required (cache at ~/.cache/codeidx-mcp)"]
+fn real_vector_smoke_chinese_query() {
+    let mgr = ProjectManager::new();
+    let root = fixture_root();
+    let rss_before = vm_rss_kb();
+    let t0 = std::time::Instant::now();
+    let report = mgr.mount(&root, true).expect("mount with vector");
+    let mount_ms = t0.elapsed().as_millis();
+    assert!(
+        report.vector,
+        "真模型环境应启用向量（缓存缺失请先跑探针或允许联网下载）"
+    );
+    let rss_after = vm_rss_kb();
+    let delta_mb = (rss_after.unwrap_or(0) as f64 - rss_before.unwrap_or(0) as f64) / 1024.0;
+    eprintln!(
+        "[smoke] mount files={} elapsed_ms={mount_ms} VmRSS {rss_before:?} -> {rss_after:?} KB (+{delta_mb:.1} MB)",
+        report.files
+    );
+
+    let query = "组合配置生成标记字符串的函数";
+    mgr.with_project(&root, |ctx| {
+        // 纯向量路。
+        let t = std::time::Instant::now();
+        let hits = ctx.store.search_vector(query, 8).expect("search_vector");
+        let dt = t.elapsed().as_millis();
+        eprintln!("[smoke] search_vector elapsed={dt}ms hits={}", hits.len());
+        for (i, h) in hits.iter().enumerate() {
+            eprintln!(
+                "[smoke]   #{} score={:.4} {} L{}-{} {}",
+                i + 1,
+                h.score,
+                h.file,
+                h.start_line,
+                h.end_line,
+                h.symbol.clone().unwrap_or_default()
+            );
+        }
+        assert!(
+            hits.iter()
+                .any(|h| h.symbol.as_deref() == Some("unicorn_marker_fn")),
+            "vector 中文查询应命中 unicorn_marker_fn: {:?}",
+            hits.iter().map(|h| h.symbol.clone()).collect::<Vec<_>>()
+        );
+        // 混合路（RRF 融合）。
+        let t = std::time::Instant::now();
+        let hy = ctx.store.search_hybrid(query, 8).expect("search_hybrid");
+        let dt2 = t.elapsed().as_millis();
+        eprintln!("[smoke] search_hybrid elapsed={dt2}ms hits={}", hy.len());
+        for (i, h) in hy.iter().enumerate() {
+            eprintln!(
+                "[smoke]   #{} score={:.4} {} L{}-{} {}",
+                i + 1,
+                h.score,
+                h.file,
+                h.start_line,
+                h.end_line,
+                h.symbol.clone().unwrap_or_default()
+            );
+        }
+        assert!(
+            hy.iter()
+                .any(|h| h.symbol.as_deref() == Some("unicorn_marker_fn")),
+            "hybrid 中文查询应命中 unicorn_marker_fn"
+        );
+        Ok(())
+    })
+    .expect("with_project smoke");
+    mgr.unmount(&root).expect("cleanup");
+}

@@ -1,4 +1,4 @@
-//! 检索：FTS5 BM25 关键词检索 + Phase 1 的 vector/hybrid 行为约定。
+//! 检索：FTS5 BM25 关键词检索（vector / hybrid 路见 vec.rs，Issue #5）。
 
 use codeidx_protocol::{SearchHit, ToolError};
 use rusqlite::params;
@@ -20,6 +20,20 @@ impl Store {
     /// file / symbol / 行号，snippet 取剥头后前 3 行。bm25() 返回负值
     /// 且越相关越负，取负后 score 与"越高越相关"的 DTO 语义对齐。
     pub fn search_keyword(&self, query: &str, top_k: usize) -> Result<Vec<SearchHit>, ToolError> {
+        Ok(self
+            .search_keyword_hits(query, top_k)?
+            .into_iter()
+            .map(|(_, hit)| hit)
+            .collect())
+    }
+
+    /// search_keyword 的内部形态：额外携带 chunk_id（RRF 融合的精确标识，
+    /// 比 (file, symbol, 行号) 组合键更稳：同文件同键冲突不可能出现）。
+    pub(crate) fn search_keyword_hits(
+        &self,
+        query: &str,
+        top_k: usize,
+    ) -> Result<Vec<(i64, SearchHit)>, ToolError> {
         if top_k == 0 {
             return Ok(Vec::new());
         }
@@ -49,7 +63,7 @@ impl Store {
             raw.push(pair.map_err(sqlite_err)?);
         }
         drop(stmt);
-        let mut hits = Vec::with_capacity(raw.len());
+        let mut hits: Vec<(i64, SearchHit)> = Vec::with_capacity(raw.len());
         for (chunk_id, bm) in raw {
             let (rel_path, symbol, start_line, end_line, text) = conn
                 .query_row(
@@ -71,33 +85,25 @@ impl Store {
             // 精确等于完整 query（即 query 本身是符号名、该块是其定义体）时
             // 提升；引用/兜底块不提升，保持结果按 score 降序。
             let exact = symbol.as_deref() == Some(query);
-            hits.push(SearchHit {
-                file: rel_path,
-                symbol,
-                start_line,
-                end_line,
-                score: -bm + if exact { EXACT_QUERY_BOOST } else { 0.0 },
-                snippet: tokens::snippet_of(&text, 3),
-            });
+            hits.push((
+                chunk_id,
+                SearchHit {
+                    file: rel_path,
+                    symbol,
+                    start_line,
+                    end_line,
+                    score: -bm + if exact { EXACT_QUERY_BOOST } else { 0.0 },
+                    snippet: tokens::snippet_of(&text, 3),
+                },
+            ));
         }
         // 按 score 降序输出（DTO 契约），并截回请求的 top_k。
         hits.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
+            b.1.score
+                .partial_cmp(&a.1.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         hits.truncate(top_k);
         Ok(hits)
-    }
-
-    /// Phase 1：向量检索未接入（sqlite-vec / fastembed 属 Phase 2），
-    /// 始终返回明确错误，文案含 "vector search disabled"。
-    pub fn search_vector(&self, _query: &str, _top_k: usize) -> Result<Vec<SearchHit>, ToolError> {
-        Err(ToolError::new("vector search disabled (Phase 2)"))
-    }
-
-    /// Phase 1：混合检索降级为关键词检索（RRF 融合留给 Phase 2）。
-    pub fn search_hybrid(&self, query: &str, top_k: usize) -> Result<Vec<SearchHit>, ToolError> {
-        self.search_keyword(query, top_k)
     }
 }

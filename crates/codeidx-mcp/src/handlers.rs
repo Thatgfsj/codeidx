@@ -84,23 +84,33 @@ pub fn get_repo_map(args: &Value) -> Result<ToolPayload, ToolError> {
     })
 }
 
-/// search_code：mode 分流。keyword → FTS5；vector → 向量（Phase 1 报
-/// 未启用）；hybrid → RRF（Phase 1 降级 keyword）。top_k 缺省 8。
-/// 响应 mode 字段回显实际执行的模式。
+/// search_code：mode 分流。keyword → FTS5；vector → 向量；hybrid → RRF。
+/// top_k 缺省 8。**降级可见性（F2.5）**：vector 未就绪（未启用/
+/// CODEIDX_DISABLE_VECTOR/模型加载失败）时一律降级 keyword，且响应
+/// mode 字段回显实际执行模式——客户端据 mode 即可感知降级。
 pub fn search_code(args: &Value) -> Result<ToolPayload, ToolError> {
     let params: SearchParams = parse_args(args)?;
     let mode = params.mode.unwrap_or(SearchMode::Hybrid);
     let top_k = params.top_k.unwrap_or(8) as usize;
     MANAGER.with_project(Path::new(&params.path), |ctx| {
         let started = Instant::now();
-        let results = match mode {
+        let effective = if ctx.store.is_vector_ready() {
+            mode
+        } else {
+            tracing::warn!(
+                requested = ?mode,
+                "vector not ready; degrading to keyword search"
+            );
+            SearchMode::Keyword
+        };
+        let results = match effective {
             SearchMode::Keyword => ctx.store.search_keyword(&params.query, top_k),
             SearchMode::Vector => ctx.store.search_vector(&params.query, top_k),
             SearchMode::Hybrid => ctx.store.search_hybrid(&params.query, top_k),
         }?;
         Ok(report_to_value(&SearchResult {
             results,
-            mode,
+            mode: effective,
             elapsed_ms: started.elapsed().as_millis() as u64,
         }))
     })
@@ -451,17 +461,21 @@ mod tests {
         );
         assert!(value["elapsed_ms"].is_u64());
 
-        // 缺省参数：mode 回显 hybrid（Phase 1 内部降级 keyword）。
+        // 缺省参数：本挂载未启用 vector，降级为 keyword 且 mode 如实
+        // 回显实际执行模式（F2.5 降级可见性契约）。
         let value = json_of(search_code(
             &json!({"path": root, "query": "helper_spinner"}),
         ));
-        assert_eq!(value["mode"], "hybrid");
+        assert_eq!(value["mode"], "keyword");
         assert!(!value["results"].as_array().unwrap().is_empty());
 
-        // vector 模式：Phase 1 固定报未启用（isError 文案）。
-        let err = search_code(&json!({"path": root, "query": "spin", "mode": "vector"}))
-            .expect_err("vector disabled in Phase 1");
-        assert_eq!(err.message, "vector search disabled (Phase 2)");
+        // vector 模式未就绪：降级 keyword 成功返回并回显 keyword
+        // （store 层 "vector search disabled" 错误保留给直接调用方）。
+        let value = json_of(search_code(
+            &json!({"path": root, "query": "spin", "mode": "vector"}),
+        ));
+        assert_eq!(value["mode"], "keyword");
+        assert!(!value["results"].as_array().unwrap().is_empty());
         unmount_project(&json!({"path": root})).expect("unmount");
     }
 
