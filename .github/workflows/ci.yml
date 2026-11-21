@@ -92,9 +92,7 @@ jobs:
       #     cargo build --release --bin codeidx-tui
       #     ./target/release/codeidx-tui --selftest
 
-  # Windows 交叉验证（优化菜单 #6）：先保证能 build + test。
-  # 首轮预期 unix-only 代码编译失败（tokio::signal::unix / mallopt / /proc 读取），
-  # 报错清单由 Lead 转交修复；bb 脚本层（node kill / SIGTERM 语义差异）不进本 job。
+  # Windows 原生 MSVC 构建、单测和 stdio/LSP 黑盒。
   windows-smoke:
     runs-on: windows-latest
     steps:
@@ -106,4 +104,6 @@ jobs:
       - name: build release binary
         run: cargo build --release --bin codeidx-mcp
       - name: test workspace
-        run: cargo test --workspace
+        run: cargo test --locked --workspace
+      - name: MCP stdio and Rust LSP smoke
+        run: node scripts/bb_windows.mjs ./target/release/codeidx-mcp.exe
