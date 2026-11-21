@@ -15,6 +15,7 @@ mod manager;
 mod mount;
 mod sync;
 mod walker;
+mod watcher;
 
 #[cfg(test)]
 mod tests;

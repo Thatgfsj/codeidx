@@ -119,7 +119,7 @@ codeidx-mcp 走 stdio 上的 JSON-RPC 2.0，可被任意 MCP 客户端（AI Agen
 
 | 工具 | 关键参数 | 一句话用途 |
 |---|---|---|
-| `mount_project` | `path`；`enable_vector?`（bool，默认 false） | 挂载项目并在内存中构建索引；返回 `skipped_binary/skipped_oversize/skipped_unsupported` 三类跳过计数与 `vector_degraded/vector_degraded_reason` 降级标记 |
+| `mount_project` | `path`；`enable_vector?`（默认 false）；`auto_sync?`（默认 true） | 挂载项目并在内存中构建索引；返回 `skipped_binary/skipped_oversize/skipped_unsupported` 三类跳过计数与 `vector_degraded/vector_degraded_reason` 降级标记 |
 | `unmount_project` | `path` | 卸载项目：销毁内存索引并回收关联的 LSP 子进程 |
 | `list_mounted_projects` | — | 列出当前已挂载的项目及其索引规模 |
 | `sync_project` | `path` | 增量同步，反映文件系统的增 / 改 / 删；`failed`/`failed_files`（上限 20）真实列出重建失败文件 |

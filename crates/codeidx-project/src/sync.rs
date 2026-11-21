@@ -9,6 +9,7 @@
 //! failed_files_truncated=true）。
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::time::Instant;
 
 use rayon::prelude::*;
@@ -35,6 +36,16 @@ pub(crate) fn reconcile(
     present: Vec<SourceFile>,
     started: Instant,
 ) -> SyncReport {
+    reconcile_changes(ctx, present, started, |_| false)
+}
+
+/// 监听点名的路径也需要复核内容，覆盖同秒同大小的原子替换。
+pub(crate) fn reconcile_changes(
+    ctx: &mut ProjectContext,
+    present: Vec<SourceFile>,
+    started: Instant,
+    changed: impl Fn(&Path) -> bool,
+) -> SyncReport {
     // ---- 三分类（纯内存比对，无 IO）----
     let present_map: HashMap<&str, &SourceFile> = present
         .iter()
@@ -42,15 +53,14 @@ pub(crate) fn reconcile(
         .collect();
 
     let mut added: Vec<&SourceFile> = Vec::new();
-    let mut candidates: Vec<&SourceFile> = Vec::new(); // mtime/size 变更候选
+    let mut candidates: Vec<&SourceFile> = Vec::new();
     for sf in &present {
         match ctx.files.get(&sf.rel_path) {
             None => added.push(sf),
             Some(rec) => {
-                if rec.mtime != sf.mtime || rec.size != sf.size {
+                if rec.mtime != sf.mtime || rec.size != sf.size || changed(&sf.abs) {
                     candidates.push(sf);
                 }
-                // mtime/size 均未变 → 快筛通过，不做 blake3 复核（增量语义）。
             }
         }
     }

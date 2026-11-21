@@ -150,7 +150,8 @@ fn unmount_releases_context() {
 fn sync_reconciles_add_modify_remove() {
     let mgr = ProjectManager::new();
     let root = temp_project("sync");
-    mgr.mount(&root, false).expect("mount copy");
+    mgr.mount_with_auto_sync(&root, false, false)
+        .expect("mount copy without watcher");
 
     // 改 1：src/lib.rs 追加函数（size 与内容都变）。
     let lib = root.join("src/lib.rs");

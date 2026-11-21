@@ -1,7 +1,7 @@
 // bb_phase1.mjs — Phase 1 黑盒验收（docs/ACCEPTANCE.md §2 用例 F1.1–F1.15）
 // 用法：node scripts/bb_phase1.mjs <path-to-codeidx-mcp-binary>
 // 退出码 0 = 全部通过。file_path 参数语义：挂载根内相对路径。
-import { cpSync, mkdtempSync, rmSync, mkdirSync, writeFileSync, rmSync as rmf, statSync } from 'node:fs';
+import { cpSync, mkdtempSync, rmSync, mkdirSync, writeFileSync, renameSync, utimesSync, rmSync as rmf, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -120,6 +120,8 @@ async function main() {
   });
 
   await runCase('F1.9', 'sync 增量 + 变更生效', async () => {
+    const mount = await c.tool('mount_project', { path: work, auto_sync: false });
+    expect(!mount.isError, 'mount without automatic sync: ' + mount.text);
     // 新增
     writeFileSync(join(work, 'src/extra.rs'), 'pub fn brand_new_fn() -> u32 { 42 }\n');
     // 修改
@@ -145,6 +147,65 @@ async function main() {
     expectEq(r.json.unmounted, true, 'unmounted');
     const l = await c.tool('list_mounted_projects', {});
     expect(!(l.json.projects ?? []).some(p => p.path === work), 'gone from list');
+  });
+
+  await runCase('auto-sync', '默认监听新增、原子替换和删除，卸载后可关闭', async () => {
+    const call = async (name, args = {}) => {
+      const result = await c.tool(name, { path: work, ...args });
+      expect(!result.isError, name + ': ' + result.text);
+      return result;
+    };
+    const has = async query => {
+      const { json } = await call('search_code', { query, mode: 'keyword' });
+      return json.results.split('\n').some(row => {
+        const [file, symbol] = row.split('\t');
+        return file === 'src/live.rs' && symbol === query;
+      });
+    };
+    const eventually = async (condition, message) => {
+      const deadline = Date.now() + 8000;
+      while (Date.now() < deadline) {
+        if (await condition()) return;
+        await new Promise(resolve => setTimeout(resolve, 40));
+      }
+      throw new Error(message);
+    };
+    await call('mount_project');
+    const live = join(work, 'src/live.rs');
+    const temp = join(work, 'src/.live-save');
+    const timestamp = 1700000000;
+    // 通过重命名发布完整文件，避免监听读到中间写入状态。
+    writeFileSync(temp, 'pub fn zz_watch_before() {}');
+    utimesSync(temp, timestamp, timestamp);
+    renameSync(temp, live);
+    await eventually(() => has('zz_watch_before'), '新文件未进入索引');
+
+    // 旧、新文件长度和 mtime 完全一致，必须由文件事件触发内容复核。
+    const before = statSync(live);
+    writeFileSync(temp, 'pub fn zz_watch_afterx() {}');
+    utimesSync(temp, timestamp, timestamp);
+    renameSync(temp, live);
+    const after = statSync(live);
+    expectEq(after.size, before.size, 'same file size');
+    expectEq(after.mtimeMs, before.mtimeMs, 'same mtime');
+    await eventually(() => has('zz_watch_afterx'), '原子替换未进入索引');
+    expect(!(await has('zz_watch_before')), '旧符号已移除');
+
+    rmf(live);
+    await eventually(async () => !(await has('zz_watch_afterx')), '删除未清除索引');
+    // 留下可能未消费的文件事件，随后卸载并用禁用模式挂载同一路径。
+    writeFileSync(temp, 'pub fn zz_pending_event() {}');
+    await call('unmount_project');
+    const absent = await c.tool('search_code', { path: work, query: 'zz_pending_event' });
+    expect(absent.isError && /not mounted/.test(absent.text), '卸载后不可查询');
+    await call('mount_project', { auto_sync: false });
+    renameSync(temp, live);
+    await new Promise(resolve => setTimeout(resolve, 500));
+    expect(!(await has('zz_pending_event')), '禁用或卸载后未自动更新');
+    const synced = await call('sync_project');
+    expectEq(synced.json.added, 1, 'manual sync added file');
+    expect(await has('zz_pending_event'), '手动同步后可查');
+    await call('unmount_project');
   });
 
   await runCase('stdout-clean', 'stdout 全程无污染', async () => {

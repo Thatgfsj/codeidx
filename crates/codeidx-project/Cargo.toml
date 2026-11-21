@@ -14,5 +14,6 @@ codeidx-protocol = { workspace = true }
 dashmap = { workspace = true }
 rayon = { workspace = true }
 ignore = { workspace = true }
+notify = { workspace = true }
 blake3 = { workspace = true }
 tracing = { workspace = true }

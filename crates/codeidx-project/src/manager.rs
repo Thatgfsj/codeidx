@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use codeidx_ast::ParsedFile;
@@ -17,7 +18,7 @@ use codeidx_protocol::ToolError;
 use codeidx_store::Store;
 use dashmap::DashMap;
 
-use crate::{mount, sync, walker};
+use crate::{mount, sync, walker, watcher};
 
 /// 单项目索引上下文：内存库 + 解析缓存 + 文件记录表 + 向量降级态。
 pub struct ProjectContext {
@@ -48,7 +49,13 @@ pub struct FileRecord {
 
 /// 多项目管理器：并发安全挂载表，全部方法 `&self`。
 pub struct ProjectManager {
-    projects: DashMap<PathBuf, ProjectContext>,
+    projects: DashMap<PathBuf, MountedProject>,
+}
+
+struct MountedProject {
+    // 先停止监听，再释放上下文。工作线程只持有上下文的弱引用。
+    _watcher: Option<watcher::ProjectWatcher>,
+    context: Arc<RwLock<ProjectContext>>,
 }
 
 impl Default for ProjectManager {
@@ -79,14 +86,36 @@ impl ProjectManager {
     /// 挂载：walker 遍历 → rayon 并行解析 → 全量入库。
     /// 重复 mount 同一路径 = 卸载旧上下文后重建（幂等）。
     pub fn mount(&self, path: &Path, enable_vector: bool) -> Result<MountReport, ToolError> {
+        self.mount_with_auto_sync(path, enable_vector, true)
+    }
+
+    /// 挂载项目，并允许显式关闭自动同步。启动监听失败时保留原挂载。
+    pub fn mount_with_auto_sync(
+        &self,
+        path: &Path,
+        enable_vector: bool,
+        auto_sync: bool,
+    ) -> Result<MountReport, ToolError> {
         let started = Instant::now();
         let root = Self::canonical_root(path)?;
-        // 新上下文全部构建成功后，才替换旧上下文（失败不破坏既有索引）。
+        let subscription = auto_sync
+            .then(|| watcher::Subscription::register(&root))
+            .transpose()?;
         let built = mount::build_context(&root, enable_vector)?;
         let files = built.context.files.len() as u64;
         let symbols = built.symbols;
-        self.projects.remove(&root); // drop 旧 store，内存即时释放
-        self.projects.insert(root.clone(), built.context);
+        let context = Arc::new(RwLock::new(built.context));
+        let watcher = subscription
+            .map(|s| s.start(Arc::downgrade(&context)))
+            .transpose()?;
+        // 插入直接替换旧挂载。旧监听只关联旧上下文，退出后才返回。
+        drop(self.projects.insert(
+            root.clone(),
+            MountedProject {
+                _watcher: watcher,
+                context,
+            },
+        ));
         Ok(MountReport {
             mounted: true,
             path: root.to_string_lossy().into_owned(),
@@ -122,7 +151,7 @@ impl ProjectManager {
             .projects
             .iter()
             .map(|entry| {
-                let ctx = entry.value();
+                let ctx = entry.value().context.read().unwrap();
                 ProjectInfo {
                     path: ctx.root.to_string_lossy().into_owned(),
                     files: ctx.files.len() as u64,
@@ -143,14 +172,14 @@ impl ProjectManager {
     pub fn sync(&self, path: &Path) -> Result<SyncReport, ToolError> {
         let started = Instant::now();
         let root = Self::canonical_root(path).map_err(|_| Self::not_mounted(path))?;
-        // walk 在锁外完成，尽量缩短 DashMap 写锁持有时间。
-        // sync 不消费 walker 的跳过计数（防线内文件本就不属增量重建范围）。
-        let present = walker::collect(&root);
-        let mut ctx = self
+        let project = self
             .projects
-            .get_mut(&root)
+            .get(&root)
             .ok_or_else(|| Self::not_mounted(path))?;
-        Ok(sync::reconcile(ctx.value_mut(), present, started))
+        // 扫描和入库使用同一项目锁，避免手动和后台同步反序应用扫描快照。
+        let mut ctx = project.context.write().unwrap();
+        let present = walker::collect(&root);
+        Ok(sync::reconcile(&mut ctx, present, started))
     }
 
     /// 查询入口：未挂载返回 `project not mounted: <path>`（对齐 F1.11）。
@@ -165,7 +194,8 @@ impl ProjectManager {
             .projects
             .get(&root)
             .ok_or_else(|| Self::not_mounted(path))?;
-        f(ctx.value())
+        let ctx = ctx.context.read().unwrap();
+        f(&ctx)
     }
 }
 
@@ -179,4 +209,28 @@ pub(crate) fn vm_rss_kb() -> Option<u64> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unmount_releases_watcher_and_context() {
+        let manager = ProjectManager::new();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        manager.mount(root, false).unwrap();
+        let context = {
+            let root = root.canonicalize().unwrap();
+            let project = manager.projects.get(&root).unwrap();
+            assert!(project._watcher.is_some(), "default mount has a watcher");
+            Arc::downgrade(&project.context)
+        };
+        manager.unmount(root).unwrap();
+        assert!(
+            context.upgrade().is_none(),
+            "watcher released the old index"
+        );
+        assert!(manager.list().is_empty());
+    }
 }

@@ -36,7 +36,11 @@ fn report_to_value<T: serde::Serialize>(report: &T) -> ToolPayload {
 pub fn mount_project(args: &Value) -> Result<ToolPayload, ToolError> {
     let params: MountParams = parse_args(args)?;
     let enable_vector = params.enable_vector.unwrap_or(false);
-    let report = MANAGER.mount(Path::new(&params.path), enable_vector)?;
+    let report = MANAGER.mount_with_auto_sync(
+        Path::new(&params.path),
+        enable_vector,
+        params.auto_sync.unwrap_or(true),
+    )?;
     Ok(report_to_value(&report))
 }
 
