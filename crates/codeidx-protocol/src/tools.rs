@@ -132,6 +132,10 @@ pub struct LspPositionParams {
 // ---------------------------------------------------------------- 输出 DTO --
 
 /// mount_project 结果。
+///
+/// 硬编码纪律（产物语义硬化）：skipped_* 三类跳过计数与 vector_degraded
+/// 两字段恒出现——0 / false / 空串也序列化，AI 消费方可按固定字段集
+/// 直接判读，无需缺省键探测。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MountReport {
     /// 是否成功挂载。
@@ -148,6 +152,17 @@ pub struct MountReport {
     pub mem_est_mb: f64,
     /// 向量检索是否启用。
     pub vector: bool,
+    /// walker 跳过的含 NUL 二进制文件数。
+    pub skipped_binary: u64,
+    /// walker 跳过的超 512KB 文件数。
+    pub skipped_oversize: u64,
+    /// walker 跳过的非受支持语言文件数。
+    pub skipped_unsupported: u64,
+    /// 请求 enable_vector=true 但实际降级为纯 FTS5 时 true。
+    pub vector_degraded: bool,
+    /// 降级原因（"CODEIDX_DISABLE_VECTOR=1" / "model init failed: ..."）；
+    /// 未降级为空串。
+    pub vector_degraded_reason: String,
 }
 
 /// unmount_project 结果。
@@ -172,6 +187,11 @@ pub struct ProjectInfo {
     pub lsps: Vec<String>,
     /// 向量检索是否启用。
     pub vector: bool,
+    /// 挂载时请求向量但实际降级为纯 FTS5 时 true（MountReport 同名字段
+    /// 的持久化形态，list 亦可见）。
+    pub vector_degraded: bool,
+    /// 降级原因；未降级为空串。
+    pub vector_degraded_reason: String,
 }
 
 /// list_mounted_projects 结果。
@@ -182,6 +202,10 @@ pub struct ProjectsReport {
 }
 
 /// sync_project 结果。
+///
+/// 部分失败真实列出（产物语义硬化）：failed 计全部重建失败文件，
+/// failed_files 恒出现（空数组也序列化），上限 20 条，超出置
+/// failed_files_truncated=true。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SyncReport {
     /// 新增文件数。
@@ -194,6 +218,12 @@ pub struct SyncReport {
     pub files: u64,
     /// 同步耗时（毫秒）。
     pub elapsed_ms: u64,
+    /// 重建失败文件总数（读取失败 / 二进制 / 超限 / 入库失败）。
+    pub failed: u64,
+    /// 重建失败文件相对路径列表（上限 20）。
+    pub failed_files: Vec<String>,
+    /// 失败文件超过 20 条被截断时 true。
+    pub failed_files_truncated: bool,
 }
 
 /// search_code 单条命中。
@@ -215,6 +245,10 @@ pub struct SearchHit {
 }
 
 /// search_code 结果。
+///
+/// 降级显式 + 上下文防爆（产物语义硬化）：degraded / degraded_reason /
+/// total_candidates 恒出现；total_candidates 为本次挂载参与检索排序的
+/// 候选块总数（results 为空且 total_candidates>0 = 查询无命中而非无索引）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SearchResult {
     /// 命中列表（得分降序）。
@@ -223,6 +257,13 @@ pub struct SearchResult {
     pub mode: SearchMode,
     /// 检索耗时（毫秒）。
     pub elapsed_ms: u64,
+    /// 实际执行模式 ≠ 请求模式（向量路降级 keyword）时 true。
+    pub degraded: bool,
+    /// 降级原因（"vector not enabled for this mount" /
+    /// "CODEIDX_DISABLE_VECTOR=1" / "model init failed: ..."）；未降级空串。
+    pub degraded_reason: String,
+    /// 本挂载参与检索排序的候选块总数。
+    pub total_candidates: u64,
 }
 
 /// get_file_outline 单条符号。
@@ -313,6 +354,11 @@ mod tests {
             elapsed_ms: 56,
             mem_est_mb: 1.5,
             vector: false,
+            skipped_binary: 1,
+            skipped_oversize: 2,
+            skipped_unsupported: 3,
+            vector_degraded: false,
+            vector_degraded_reason: String::new(),
         };
         let value: Value = serde_json::to_value(&report).unwrap();
         assert_eq!(
@@ -324,10 +370,133 @@ mod tests {
                 "symbols": 34,
                 "elapsed_ms": 56,
                 "mem_est_mb": 1.5,
-                "vector": false
+                "vector": false,
+                "skipped_binary": 1,
+                "skipped_oversize": 2,
+                "skipped_unsupported": 3,
+                "vector_degraded": false,
+                "vector_degraded_reason": ""
             })
         );
         round_trip(&report);
+    }
+
+    /// 硬编码纪律：新固定字段在零值态也必须序列化（AI 按固定字段集判读，
+    /// 不做缺省键探测）。MountReport 全零 / 未降级时键集完整。
+    #[test]
+    fn mount_report_hardcoded_fields_always_present() {
+        let value: Value = serde_json::to_value(&MountReport {
+            mounted: true,
+            path: "/r".into(),
+            files: 0,
+            symbols: 0,
+            elapsed_ms: 0,
+            mem_est_mb: 0.0,
+            vector: false,
+            skipped_binary: 0,
+            skipped_oversize: 0,
+            skipped_unsupported: 0,
+            vector_degraded: false,
+            vector_degraded_reason: String::new(),
+        })
+        .unwrap();
+        for key in [
+            "mounted",
+            "path",
+            "files",
+            "symbols",
+            "elapsed_ms",
+            "mem_est_mb",
+            "vector",
+            "skipped_binary",
+            "skipped_oversize",
+            "skipped_unsupported",
+            "vector_degraded",
+            "vector_degraded_reason",
+        ] {
+            assert!(
+                value.get(key).is_some(),
+                "MountReport 恒出现字段缺失: {key}"
+            );
+        }
+        assert_eq!(value["vector_degraded_reason"], "");
+    }
+
+    /// SearchResult / SyncReport / ProjectInfo 同样遵守恒出现纪律。
+    #[test]
+    fn search_sync_info_hardcoded_fields_always_present() {
+        let search: Value = serde_json::to_value(&SearchResult {
+            results: Vec::new(),
+            mode: SearchMode::Keyword,
+            elapsed_ms: 0,
+            degraded: false,
+            degraded_reason: String::new(),
+            total_candidates: 0,
+        })
+        .unwrap();
+        for key in [
+            "results",
+            "mode",
+            "elapsed_ms",
+            "degraded",
+            "degraded_reason",
+            "total_candidates",
+        ] {
+            assert!(
+                search.get(key).is_some(),
+                "SearchResult 恒出现字段缺失: {key}"
+            );
+        }
+        assert_eq!(search["degraded_reason"], "");
+        assert_eq!(search["results"], serde_json::json!([]));
+
+        let sync: Value = serde_json::to_value(&SyncReport {
+            added: 0,
+            modified: 0,
+            removed: 0,
+            files: 0,
+            elapsed_ms: 0,
+            failed: 0,
+            failed_files: Vec::new(),
+            failed_files_truncated: false,
+        })
+        .unwrap();
+        for key in [
+            "added",
+            "modified",
+            "removed",
+            "files",
+            "elapsed_ms",
+            "failed",
+            "failed_files",
+            "failed_files_truncated",
+        ] {
+            assert!(sync.get(key).is_some(), "SyncReport 恒出现字段缺失: {key}");
+        }
+        assert_eq!(sync["failed_files"], serde_json::json!([]));
+        assert_eq!(sync["failed_files_truncated"], false);
+
+        let info: Value = serde_json::to_value(&ProjectInfo {
+            path: "/r".into(),
+            files: 0,
+            symbols: 0,
+            lsps: Vec::new(),
+            vector: false,
+            vector_degraded: false,
+            vector_degraded_reason: String::new(),
+        })
+        .unwrap();
+        for key in [
+            "path",
+            "files",
+            "symbols",
+            "lsps",
+            "vector",
+            "vector_degraded",
+            "vector_degraded_reason",
+        ] {
+            assert!(info.get(key).is_some(), "ProjectInfo 恒出现字段缺失: {key}");
+        }
     }
 
     #[test]
@@ -402,6 +571,11 @@ mod tests {
             elapsed_ms: 3,
             mem_est_mb: 4.0,
             vector: false,
+            skipped_binary: 0,
+            skipped_oversize: 0,
+            skipped_unsupported: 0,
+            vector_degraded: false,
+            vector_degraded_reason: String::new(),
         })
         .unwrap();
         assert!(mount.contains("\"elapsed_ms\":3"));
@@ -442,6 +616,9 @@ mod tests {
             removed: 3,
             files: 4,
             elapsed_ms: 5,
+            failed: 0,
+            failed_files: Vec::new(),
+            failed_files_truncated: false,
         })
         .unwrap();
         assert!(sync.contains("\"elapsed_ms\":5"));
@@ -459,6 +636,9 @@ mod tests {
             removed: 3,
             files: 4,
             elapsed_ms: 5,
+            failed: 0,
+            failed_files: Vec::new(),
+            failed_files_truncated: false,
         });
         round_trip(&ProjectsReport {
             projects: vec![ProjectInfo {
@@ -467,6 +647,8 @@ mod tests {
                 symbols: 2,
                 lsps: vec!["rust-analyzer".into()],
                 vector: true,
+                vector_degraded: false,
+                vector_degraded_reason: String::new(),
             }],
         });
         round_trip(&SearchResult {
@@ -480,6 +662,9 @@ mod tests {
             }],
             mode: SearchMode::Hybrid,
             elapsed_ms: 9,
+            degraded: false,
+            degraded_reason: String::new(),
+            total_candidates: 12,
         });
         round_trip(&FileOutline {
             file: "src/a.rs".into(),

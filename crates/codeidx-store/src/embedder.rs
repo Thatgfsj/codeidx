@@ -38,11 +38,20 @@ pub struct FastembedEmbedder {
     model: Mutex<TextEmbedding>,
 }
 
+/// ONNX intra-op 线程数上限。
+///
+/// dogfooding 实测：默认线程数=物理核数时，多线程各自的分配 arena 与
+/// memory-pattern 缓存会显著放大常驻内存（配合 main.rs 的 M_ARENA_MAX
+/// 与本模块的长度分桶策略）；bge-small-zh 是轻量小模型，4 线程足够。
+const ONNX_INTRA_THREADS: usize = 4;
+
 impl FastembedEmbedder {
     /// 以显式缓存目录初始化模型（首次约数百 ms 级缓存命中；空缓存时
     /// 触发 90.5MB ONNX 下载，由调用方决定时机——见 mount 懒加载）。
     pub fn new() -> Result<Self, String> {
-        let opts = TextInitOptions::new(EmbeddingModel::BGESmallZHV15).with_cache_dir(cache_dir());
+        let opts = TextInitOptions::new(EmbeddingModel::BGESmallZHV15)
+            .with_cache_dir(cache_dir())
+            .with_intra_threads(ONNX_INTRA_THREADS);
         let model = TextEmbedding::try_new(opts)
             .map_err(|e| format!("fastembed init failed (model BAAI/bge-small-zh-v1.5): {e}"))?;
         Ok(FastembedEmbedder {
@@ -64,6 +73,15 @@ impl FastembedEmbedder {
     }
 }
 
+/// 我们层的固定批大小：所有 embed 调用形状统一为 (≤16, ≤prefix token)，
+/// 避免多样 batch 形状各自触发一份 ONNX memory-pattern arena 缓存
+/// （dogfooding 实测多样形状使 RSS 膨胀 ~3 倍并拖慢 plan 编译）。
+const EMBED_FIXED_BATCH: usize = 16;
+
+/// 嵌入文本前缀截断（≈512 token，与 tokenizer 的 max_length 截断语义
+/// 等价：反正超长部分会被丢弃，提前截让批内 pad 长度统一）。
+const EMBED_TEXT_PREFIX_CHARS: usize = 1600;
+
 impl Embedder for FastembedEmbedder {
     fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
         if texts.is_empty() {
@@ -73,9 +91,36 @@ impl Embedder for FastembedEmbedder {
             .model
             .lock()
             .map_err(|_| "fastembed model mutex poisoned".to_string())?;
-        model
-            .embed(texts, None)
-            .map_err(|e| format!("fastembed embed failed: {e}"))
+        let truncated: Vec<String> = texts
+            .iter()
+            .map(|t| {
+                if t.chars().count() <= EMBED_TEXT_PREFIX_CHARS {
+                    t.clone()
+                } else {
+                    t.chars().take(EMBED_TEXT_PREFIX_CHARS).collect()
+                }
+            })
+            .collect();
+        // 长度分桶：按文本长度排序后切批，批内 pad 长度相近，ONNX
+        // memory-pattern 形状数从「每文件一种」收敛到「每桶一种」，
+        // 避免逐批重新编译执行计划（dogfooding 实测该项占挂载耗时大头）。
+        let mut order: Vec<usize> = (0..truncated.len()).collect();
+        order.sort_by_key(|&i| truncated[i].chars().count());
+        let mut all: Vec<Option<Vec<f32>>> = vec![None; truncated.len()];
+        for chunk in order.chunks(EMBED_FIXED_BATCH) {
+            let batch: Vec<String> = chunk.iter().map(|&i| truncated[i].clone()).collect();
+            let vecs = model
+                .embed(batch, None)
+                .map_err(|e| format!("fastembed embed failed: {e}"))?;
+            for (&i, v) in chunk.iter().zip(vecs) {
+                all[i] = Some(v);
+            }
+        }
+        let all: Result<Vec<Vec<f32>>, String> = all
+            .into_iter()
+            .map(|v| v.ok_or_else(|| "fastembed batch index desync".to_string()))
+            .collect();
+        all
     }
 
     fn dim(&self) -> usize {

@@ -88,10 +88,27 @@ pub fn get_repo_map(args: &Value) -> Result<ToolPayload, ToolError> {
 /// top_k 缺省 8。**降级可见性（F2.5）**：vector 未就绪（未启用/
 /// CODEIDX_DISABLE_VECTOR/模型加载失败）时一律降级 keyword，且响应
 /// mode 字段回显实际执行模式——客户端据 mode 即可感知降级。
+/// top_k 硬 clamp（产物语义硬化：上下文防爆）：缺省 8、上限 50；
+/// 传 >50 取 50；显式传 0 视为空结果请求照常下发。
+fn clamp_top_k(raw: Option<u32>) -> usize {
+    raw.unwrap_or(8).min(50) as usize
+}
+
+/// 降级原因（产物语义硬化）：mount 时已降级 → 持久化原因
+/// （CODEIDX_DISABLE_VECTOR=1 / model init failed: ...）；用户本就
+/// 未请求向量 → 固定文案。keyword 模式不调用本函数（无降级）。
+fn degrade_reason_of(ctx: &codeidx_project::ProjectContext) -> String {
+    if ctx.vector_degraded {
+        ctx.vector_degraded_reason.clone()
+    } else {
+        "vector not enabled for this mount".to_string()
+    }
+}
+
 pub fn search_code(args: &Value) -> Result<ToolPayload, ToolError> {
     let params: SearchParams = parse_args(args)?;
     let mode = params.mode.unwrap_or(SearchMode::Hybrid);
-    let top_k = params.top_k.unwrap_or(8) as usize;
+    let top_k = clamp_top_k(params.top_k);
     MANAGER.with_project(Path::new(&params.path), |ctx| {
         let started = Instant::now();
         let effective = if ctx.store.is_vector_ready() {
@@ -103,15 +120,26 @@ pub fn search_code(args: &Value) -> Result<ToolPayload, ToolError> {
             );
             SearchMode::Keyword
         };
+        let degraded = effective != mode;
+        let degraded_reason = if degraded {
+            degrade_reason_of(ctx)
+        } else {
+            String::new()
+        };
         let results = match effective {
             SearchMode::Keyword => ctx.store.search_keyword(&params.query, top_k),
             SearchMode::Vector => ctx.store.search_vector(&params.query, top_k),
             SearchMode::Hybrid => ctx.store.search_hybrid(&params.query, top_k),
         }?;
+        // 候选块总数：parsed 缓存与 store 同步维护（mount/sync 一致性契约）。
+        let total_candidates: u64 = ctx.parsed.values().map(|pf| pf.chunks.len() as u64).sum();
         Ok(report_to_value(&SearchResult {
             results,
             mode: effective,
             elapsed_ms: started.elapsed().as_millis() as u64,
+            degraded,
+            degraded_reason,
+            total_candidates,
         }))
     })
 }
@@ -445,6 +473,16 @@ mod tests {
         );
         assert!(value["elapsed_ms"].is_u64());
 
+        // 产物语义硬化：keyword 无降级，degraded=false 且 reason 空串、
+        // total_candidates 为正（固定字段集恒出现）。
+        assert_eq!(value["degraded"], false, "keyword never degrades");
+        assert_eq!(value["degraded_reason"], "");
+        assert!(
+            value["total_candidates"].as_u64().unwrap() > 0,
+            "candidate pool: {}",
+            value["total_candidates"]
+        );
+
         // 缺省参数：本挂载未启用 vector，降级为 keyword 且 mode 如实
         // 回显实际执行模式（F2.5 降级可见性契约）。
         let value = json_of(search_code(
@@ -452,6 +490,12 @@ mod tests {
         ));
         assert_eq!(value["mode"], "keyword");
         assert!(!value["results"].as_array().unwrap().is_empty());
+        assert_eq!(value["degraded"], true, "hybrid degraded to keyword");
+        assert_eq!(
+            value["degraded_reason"], "vector not enabled for this mount",
+            "reason must be explicit: {}",
+            value["degraded_reason"]
+        );
 
         // vector 模式未就绪：降级 keyword 成功返回并回显 keyword
         // （store 层 "vector search disabled" 错误保留给直接调用方）。
@@ -460,6 +504,87 @@ mod tests {
         ));
         assert_eq!(value["mode"], "keyword");
         assert!(!value["results"].as_array().unwrap().is_empty());
+        assert_eq!(value["degraded"], true);
+        assert_eq!(
+            value["degraded_reason"],
+            "vector not enabled for this mount"
+        );
+        unmount_project(&json!({"path": root})).expect("unmount");
+    }
+
+    /// top_k 硬 clamp：缺省 8、上限 50（传 1000 取 50）、显式小值照传。
+    #[test]
+    fn top_k_hard_clamped_to_fifty() {
+        assert_eq!(clamp_top_k(None), 8, "default 8");
+        assert_eq!(clamp_top_k(Some(1000)), 50, "over-limit clamps to 50");
+        assert_eq!(clamp_top_k(Some(50)), 50, "boundary 50 stays 50");
+        assert_eq!(clamp_top_k(Some(3)), 3, "small values pass through");
+        assert_eq!(
+            clamp_top_k(Some(0)),
+            0,
+            "explicit 0 is an empty-result request"
+        );
+    }
+
+    /// MountReport 新固定字段端到端恒出现：skipped 三类计数 +
+    /// vector_degraded 零值态（mount 未请求向量）。
+    #[test]
+    fn mount_report_hardcoded_fields_end_to_end() {
+        let root = temp_project("hardcode");
+        let value = json_of(mount_project(&json!({"path": root})));
+        for key in [
+            "skipped_binary",
+            "skipped_oversize",
+            "skipped_unsupported",
+            "vector_degraded",
+            "vector_degraded_reason",
+        ] {
+            assert!(
+                value.get(key).is_some(),
+                "MountReport 恒出现字段缺失: {key} in {value}"
+            );
+        }
+        assert_eq!(value["vector_degraded"], false);
+        assert_eq!(value["vector_degraded_reason"], "");
+        assert_eq!(value["skipped_binary"], 0, "fixture 无二进制");
+
+        // list 的 ProjectInfo 同步携带降级态字段。
+        let list_value = json_of(list_mounted_projects(&Value::Null));
+        let projects = list_value["projects"].as_array().unwrap();
+        let mine = projects
+            .iter()
+            .find(|p| {
+                p["path"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("mcp-test-hardcode")
+            })
+            .expect("project listed");
+        assert_eq!(mine["vector_degraded"], false);
+        assert_eq!(mine["vector_degraded_reason"], "");
+        unmount_project(&json!({"path": root})).expect("unmount");
+    }
+
+    /// 端到端跳过计数：.md 计 unsupported、600KB 计 oversize、NUL 计
+    /// binary（真造三类文件；node_modules 属黑名单目录不计入三类）。
+    #[test]
+    fn mount_report_counts_three_skip_kinds() {
+        let root = temp_project("skips");
+        fs::write(root.join("notes.md"), "docs are unsupported").expect("write md");
+        let big = format!("pub fn big() -> u32 {{ 1 }} {}", "// pad".repeat(90_000));
+        fs::write(root.join("big.rs"), &big).expect("write big");
+        let mut nul = b"pub fn n() -> u32 { 0 }".to_vec();
+        nul.push(0u8);
+        fs::write(root.join("nul.rs"), &nul).expect("write nul");
+
+        let value = json_of(mount_project(&json!({"path": root})));
+        assert_eq!(value["skipped_binary"], 1, "nul.rs counted: {value}");
+        assert_eq!(value["skipped_oversize"], 1, "big.rs counted: {value}");
+        // fixture 自带 Cargo.toml + README.md + 本用例的 notes.md = 3。
+        assert_eq!(
+            value["skipped_unsupported"], 3,
+            "Cargo.toml + README.md + notes.md: {value}"
+        );
         unmount_project(&json!({"path": root})).expect("unmount");
     }
 

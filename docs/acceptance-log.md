@@ -69,3 +69,21 @@
 - 通用门: fmt=PASS clippy=PASS test=121 passed/0 failed/1 ignored（-1 为被移除的 stub 契约测试，预期）；release 重建后 bb_phase1 17/17 + bb_phase2 6/6 + bb_phase3 8/8 全绿（F1.13 idle 10.3MB）
 - 实测数字补录（出处：teammate-e 探针 /tmp/phase2-probe 与 teammate-g 真模型 #[ignore] 冒烟，供 README 性能小节引用）：模型懒加载常驻 VmRSS +131.6MB（e/g 双证；g 冒烟 debug 构建含索引开销为 +205MB）；缓存命中下 mount 全流程（模型 init + 6 文件索引 + ~20 chunk 嵌入）508ms；检索 5ms；模型缓存 91MB（~/.cache/codeidx-mcp）；首次无缓存下载 86s（90.5MB）
 - 结论: **PASS**
+
+## 2026-11-22 dogfooding 自举：挂载本仓库（49 文件 / ~680 符号）暴露并修复 ONNX 内存/耗时缺陷 — Lead
+
+- 自举实测（release、真向量、缓存命中）：首挂 65-95s、挂载后 VmRSS **4071MB**、unmount 后模型单例驻留不回落（架构语义内）
+- 根因链（探针三步定位）：①统一形状探针稳态仅 366MB → 排除泄漏；②多样批形状探针复现 ~1GB → **每种新 batch shape 触发独立 ONNX memory-pattern arena 缓存**；③真实进程多线程 malloc arena 放大 ~4×（glibc 每线程最多 8 arena × 16 线程）
+- 三项修复：①main.rs mallopt(M_ARENA_MAX,2) 进程级压 arena；②embed_batch 文本前缀截断 1600 字符 + 固定批 16；③长度分桶排序（pattern 形状数收敛）+ ONNX_INTRA_THREADS=4
+- 修复后实测：**VmRSS 824MB（4.9 倍改善）、首挂 43s（plan 编译收敛）**；三件套 121 passed/0 failed/1 ignored 零回归
+- 已知现状与优化路线（诚实记录）：43s 为一次性挂载成本（sync 增量仅重嵌变更块）；残余瓶颈为桶间形状仍渐进变化触发少量 plan 编译，彻底统一需研究语义安全的定长 padding（CLS pooling 下空白不产生 token，需另寻方案）与 ort session config 键；824MB 中模型常驻 131MB 属设计内（懒加载全局单例，进程退出才释放）
+- 结论: **PASS**（产品语义「挂载毫秒级」仅指无向量路径；含向量首挂以本条实测为准，文档已同步）
+
+## 2026-11-22 产物语义硬化（用户四条要求：AI 可读/预算管理/硬编码/真实标记） — teammate-b + Lead
+
+- 交付物: protocol DTO 五报告 +12 固定字段（恒出现，零值也序列化）；repomap 元信息头（symbols/shown/budget/used_tokens/truncated）+空图单行头+focus ignored 标记；walker 三类跳过计数（binary/oversize/unsupported）；mount/sync 降级与失败真列（vector_degraded+reason、failed_files 上限 20+truncated）；search degraded/degraded_reason/total_candidates；top_k 硬 clamp 8..50；AGENT-SOP/README 同步
+- 通用门: fmt=PASS clippy=PASS(-D warnings 0，Lead 收尾修 sync type-alias 与 walker doc-continuation 两 lint) test=140 passed/0 failed/1 ignored（+19 硬化单测）
+- 黑盒（release）: bb_phase1 17/17 + bb_phase2 6/6 + bb_phase3 8/8 全绿
+- 自举终版产物: mount 含 skipped_unsupported=16（AI 可判读为何非全量）+vector_degraded=false；list 同步降级态；unmount killed_lsps=1；挂载 41.7s / RSS 823MB（ONNX 修复实效）
+- 审查过程: b 会话中断一次（Lead 唤醒恢复）；clippy 全 workspace 曾挂 store dead_code（b 快照旧态，主区已修）+project 两 lint（Lead 收尾）；集成为 Lead 直接执行（按用户规范简单收尾 Lead 完成）
+- 结论: **PASS**
