@@ -1,6 +1,8 @@
-// bb_phase3.mjs — Phase 3 黑盒验收（docs/ACCEPTANCE.md §4 用例 F3.1–F3.5）
+// bb_phase3.mjs — Phase 3 黑盒验收（docs/ACCEPTANCE.md §4 用例 F3.1–F3.7）
 // 用法：node scripts/bb_phase3.mjs <path-to-codeidx-mcp-binary>
-// 前提：本机安装 rust-analyzer；vtsls/pyright/gopls 等未安装（F3.5 用 Python 实测）。
+// 前提：本机安装 rust-analyzer、basedpyright-langserver（--stdio）、gopls
+//（gopls 还依赖 PATH 上的 go 命令）；TypeScript 服务器（vtsls 等）未安装
+//（F3.5 用 TypeScript 实测）。
 import { cpSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -65,8 +67,9 @@ async function main() {
   });
 
   await run('F3.5', '未装语言 LSP 优雅报错', async () => {
+    // 多语言实装后 basedpyright 在机，F3.5 以仍未装的 TypeScript 为准。
     const r = await c.tool('lsp_definition', {
-      path: work, file_path: 'app.py', line: 1, character: 0,
+      path: work, file_path: 'index.ts', line: 1, character: 0,
     }, { timeoutMs: 30000 });
     expect(r.isError, 'isError expected');
     expect(/not found on PATH/.test(r.text), 'message: ' + r.text);
@@ -89,6 +92,48 @@ async function main() {
       await new Promise(res => setTimeout(res, 300));
     }
     expect(gone, 'rust-analyzer terminated after unmount');
+  });
+
+  // —— 多语言用例组（F3.6/F3.7，basedpyright + gopls 实机）——
+  const polyFixture = join(repoRoot, 'tests/fixtures/polyglot-project');
+  const poly = mkdtempSync(join(tmpdir(), 'bb3-poly-'));
+  cpSync(polyFixture, poly, { recursive: true });
+
+  await run('F3.0-poly', 'mount polyglot fixture', async () => {
+    const r = await c.tool('mount_project', { path: poly });
+    expect(!r.isError, 'mount ok: ' + r.text);
+  });
+
+  await run('F3.6', 'lsp_definition Python 跳转（basedpyright）', async () => {
+    const appLines = readFileSync(join(poly, 'app.py'), 'utf8').split('\n');
+    let pyLine = -1, pyChar = -1;
+    for (let i = 0; i < appLines.length; i++) {
+      const col = appLines[i].indexOf('GoldWidget(');
+      if (col >= 0) { pyLine = i + 1; pyChar = col; break; }
+    }
+    expect(pyLine > 0, 'locate GoldWidget call in app.py');
+    const r = await c.tool('lsp_definition', {
+      path: poly, file_path: 'app.py', line: pyLine, character: pyChar,
+    }, { timeoutMs: 90000 });
+    expect(!r.isError, 'definition ok: ' + r.text);
+    const locs = r.json.locations ?? [];
+    expect(locs.some(l => l.file === 'models.py' && l.line === 4),
+      'jumps to models.py:4, got ' + JSON.stringify(locs));
+  });
+
+  await run('F3.7', 'lsp_references Go 引用集（gopls）', async () => {
+    const r = await c.tool('lsp_references', {
+      path: poly, file_path: 'types.go', line: 18, character: 18,
+    }, { timeoutMs: 90000 });
+    expect(!r.isError, 'references ok: ' + r.text);
+    const lines = (r.json.locations ?? []).filter(l => l.file === 'main.go').map(l => l.line);
+    expect(lines.includes(12), 'main.go:12 in references, got ' + JSON.stringify(lines));
+  });
+
+  await run('F3.7-unmount', 'polyglot unmount 回收双 LSP', async () => {
+    const r = await c.tool('unmount_project', { path: poly });
+    expectEq(r.json.unmounted, true, 'unmounted');
+    expectEq(r.json.killed_lsps, 2, 'killed_lsps=2 (basedpyright + gopls)');
   });
 
   await run('stdout-clean-3', 'stdout 零污染', async () => {
@@ -121,6 +166,7 @@ async function main() {
   });
 
   rmSync(work, { recursive: true, force: true });
+  rmSync(poly, { recursive: true, force: true });
   console.log('\n==== Phase 3 black-box summary ====');
   for (const l of results) console.log(l);
   console.log(`${results.length - failed}/${results.length} passed`);

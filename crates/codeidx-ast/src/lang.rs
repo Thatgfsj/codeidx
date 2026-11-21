@@ -42,6 +42,12 @@ pub fn language_of(lang: Lang) -> Language {
         Lang::Java => tree_sitter_java::LANGUAGE.into(),
         Lang::C => tree_sitter_c::LANGUAGE.into(),
         Lang::Cpp => tree_sitter_cpp::LANGUAGE.into(),
+        // 五门扩展语言（Dart/Kotlin/CSharp/Php/Html）的 grammar 由并行
+        // 语言包任务交付（teammates c/a/d）；交付前 detect_lang 尚未映射
+        // 对应扩展名，本分支运行时不可达，交付时逐个替换为真实 grammar。
+        Lang::Dart | Lang::Kotlin | Lang::CSharp | Lang::Php | Lang::Html => {
+            unreachable!("extractor for {lang:?} not yet delivered")
+        }
     }
 }
 

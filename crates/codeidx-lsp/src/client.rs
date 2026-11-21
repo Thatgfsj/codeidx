@@ -104,9 +104,17 @@ impl LspProcess {
             warm,
         });
 
+        let root_uri = proto::path_to_uri(root);
+        let folder_name = root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "root".to_owned());
         let params = json!({
             "processId": std::process::id(),
-            "rootUri": proto::path_to_uri(root),
+            "rootUri": root_uri,
+            // gopls 需要显式 workspaceFolders 才建立 view（实测缺省报
+            // no views）；rust-analyzer / basedpyright 按 LSP 规范兼容。
+            "workspaceFolders": [{ "uri": root_uri, "name": folder_name }],
             // capabilities 留空：桥不声明任何客户端能力，对服务器保持最小约定。
             "capabilities": {},
             "clientInfo": {
