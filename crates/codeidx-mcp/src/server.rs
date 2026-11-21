@@ -8,6 +8,8 @@ use std::sync::Arc;
 use serde::Serialize;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter, Stdout};
+// SIGINT/SIGTERM 流仅 unix 存在；Windows 走 tokio::signal::ctrl_c 事件降级。
+#[cfg(unix)]
 use tokio::signal::unix::{signal, SignalKind};
 
 use codeidx_protocol::jsonrpc::{self, Incoming, Outgoing, Request};
@@ -17,7 +19,10 @@ use codeidx_protocol::tools::tool_name;
 
 use crate::{handlers, router};
 
-/// 服务入口：循环读行分发，直到 stdin EOF / SIGINT / SIGTERM / 写失败。
+/// stdin 逐行流类型（两平台主循环共用）。
+type LineStream = tokio::io::Lines<BufReader<tokio::io::Stdin>>;
+
+/// 服务入口：循环读行分发，直到 stdin EOF / 信号 / 写失败。
 pub async fn serve() {
     // Phase 3：LSP idle reaper 与服务同生命周期（JoinHandle 可丢弃，
     // 任务随 shutdown_timeout 终结）。spawn_reaper 需要 tokio 上下文，
@@ -28,40 +33,12 @@ pub async fn serve() {
     let mut lines = stdin.lines();
     let mut stdout = BufWriter::new(tokio::io::stdout());
 
-    let mut sigint = install_signal(SignalKind::interrupt(), "SIGINT");
-    let mut sigterm = install_signal(SignalKind::terminate(), "SIGTERM");
-
-    let mut serving = true;
-    while serving {
-        tokio::select! {
-            line = lines.next_line() => {
-                match line {
-                    Ok(Some(raw)) => {
-                        if let Err(e) = handle_line(&raw, &mut stdout).await {
-                            tracing::error!(error = %e, "stdout write failed; stopping");
-                            serving = false;
-                        }
-                    }
-                    Ok(None) => {
-                        tracing::info!("stdin EOF; shutting down");
-                        serving = false;
-                    }
-                    Err(e) => {
-                        tracing::error!(error = %e, "stdin read failed");
-                        serving = false;
-                    }
-                }
-            }
-            _ = sigint.recv() => {
-                tracing::info!("SIGINT received; shutting down gracefully");
-                serving = false;
-            }
-            _ = sigterm.recv() => {
-                tracing::info!("SIGTERM received; shutting down gracefully");
-                serving = false;
-            }
-        }
-    }
+    // 平台信号源：unix 安装 SIGINT/SIGTERM 流；Windows 走 CTRL_C 事件
+    // （SIGTERM 无系统等价物，支持矩阵见 docs/COMPAT.md）。
+    #[cfg(unix)]
+    run_loop_unix(&mut lines, &mut stdout).await;
+    #[cfg(not(unix))]
+    run_loop_ctrl_c(&mut lines, &mut stdout).await;
 
     // 优雅清理：SIGKILL 全部 LSP 子进程并同步收割（进程退出兜底，
     // 防孤儿；F1.12 SIGTERM 路径同样经过这里）。
@@ -70,6 +47,84 @@ pub async fn serve() {
     tracing::info!("shutdown complete");
 }
 
+/// 行读取结果的循环控制（两平台主循环共用）。
+enum LineFlow {
+    /// 继续服务。
+    Continue,
+    /// 停止（stdin EOF / 读失败 / stdout 写失败）。
+    Stop,
+}
+
+/// 处理一条入站行读取结果。
+async fn step_line(
+    line: std::io::Result<Option<String>>,
+    stdout: &mut BufWriter<Stdout>,
+) -> LineFlow {
+    match line {
+        Ok(Some(raw)) => {
+            if let Err(e) = handle_line(&raw, stdout).await {
+                tracing::error!(error = %e, "stdout write failed; stopping");
+                return LineFlow::Stop;
+            }
+            LineFlow::Continue
+        }
+        Ok(None) => {
+            tracing::info!("stdin EOF; shutting down");
+            LineFlow::Stop
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "stdin read failed");
+            LineFlow::Stop
+        }
+    }
+}
+
+/// unix 主循环：stdin 逐行 + SIGINT / SIGTERM 信号流。
+#[cfg(unix)]
+async fn run_loop_unix(lines: &mut LineStream, stdout: &mut BufWriter<Stdout>) {
+    let mut sigint = install_signal(SignalKind::interrupt(), "SIGINT");
+    let mut sigterm = install_signal(SignalKind::terminate(), "SIGTERM");
+    loop {
+        tokio::select! {
+            line = lines.next_line() => {
+                if matches!(step_line(line, stdout).await, LineFlow::Stop) {
+                    return;
+                }
+            }
+            _ = sigint.recv() => {
+                tracing::info!("SIGINT received; shutting down gracefully");
+                return;
+            }
+            _ = sigterm.recv() => {
+                tracing::info!("SIGTERM received; shutting down gracefully");
+                return;
+            }
+        }
+    }
+}
+
+/// Windows 主循环：stdin 逐行 + CTRL_C 事件（tokio 跨平台 ctrl_c）。
+///
+/// Windows 信号模型无 SIGTERM 等价物；CTRL_C_EVENT 由 tokio::signal::ctrl_c
+/// 统一处理，服务退出仍走共享的 LSP 清理路径（见 docs/COMPAT.md）。
+#[cfg(not(unix))]
+async fn run_loop_ctrl_c(lines: &mut LineStream, stdout: &mut BufWriter<Stdout>) {
+    loop {
+        tokio::select! {
+            line = lines.next_line() => {
+                if matches!(step_line(line, stdout).await, LineFlow::Stop) {
+                    return;
+                }
+            }
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("CTRL_C event; shutting down gracefully");
+                return;
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
 fn install_signal(kind: SignalKind, name: &str) -> tokio::signal::unix::Signal {
     signal(kind).unwrap_or_else(|e| panic!("install {name} handler: {e}"))
 }
