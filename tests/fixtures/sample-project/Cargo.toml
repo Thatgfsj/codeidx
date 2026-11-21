@@ -1,0 +1,8 @@
+[package]
+name = "sample-project"
+version = "0.1.0"
+edition = "2021"
+
+# 该 fixture 是 codeidx-mcp 的黑盒验收对象，不是主 workspace 的成员：
+# 空的 [workspace] 表把它标记为独立 workspace 根。
+[workspace]

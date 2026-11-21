@@ -1,0 +1,24 @@
+[package]
+name = "codeidx-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "codeidx-mcp"
+path = "src/main.rs"
+
+[dependencies]
+# 依赖方向（ARCHITECTURE §2）：mcp → protocol, project, ast, store, lsp。
+# project/ast/store/lsp 由 Phase 1-B/C/3 接管，当前 bin 只消费 protocol。
+codeidx-protocol = { workspace = true }
+codeidx-project = { workspace = true }
+codeidx-ast = { workspace = true }
+codeidx-store = { workspace = true }
+codeidx-lsp = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
