@@ -62,3 +62,10 @@
 - 黑盒终验（release 二进制）: bb_phase1 17/17 + bb_phase2 6/6 + bb_phase3 8/8 全绿
 - 审查过程: 磁盘满（根分区）中断一次，用户手动清理解除；g 自救清理 + 探针复现 e 的两个关键结论；三项偏离按预裁定接受（default-features=false、OnceLock 失败不重试、事务后批嵌入+自愈）
 - 结论: **PASS**
+
+## 2026-11-21 收尾清理与实测数字补录 — Lead
+
+- 清理: router.rs 删三个不可达同步 lsp insert（路由表 11→8）+ stub 契约测试移除；handlers.rs 删三个同步兜底 stub；路由断言改为「8 同步 + lsp 三项 async 分流」语义；ci.yml components 加 rust-analyzer（lsp 实机单测 CI 可跑）
+- 通用门: fmt=PASS clippy=PASS test=121 passed/0 failed/1 ignored（-1 为被移除的 stub 契约测试，预期）；release 重建后 bb_phase1 17/17 + bb_phase2 6/6 + bb_phase3 8/8 全绿（F1.13 idle 10.3MB）
+- 实测数字补录（出处：teammate-e 探针 /tmp/phase2-probe 与 teammate-g 真模型 #[ignore] 冒烟，供 README 性能小节引用）：模型懒加载常驻 VmRSS +131.6MB（e/g 双证；g 冒烟 debug 构建含索引开销为 +205MB）；缓存命中下 mount 全流程（模型 init + 6 文件索引 + ~20 chunk 嵌入）508ms；检索 5ms；模型缓存 91MB（~/.cache/codeidx-mcp）；首次无缓存下载 86s（90.5MB）
+- 结论: **PASS**

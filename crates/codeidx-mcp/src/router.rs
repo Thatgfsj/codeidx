@@ -32,9 +32,8 @@ fn route_table() -> &'static HashMap<&'static str, ToolHandler> {
         table.insert(tool_name::SEARCH_CODE, handlers::search_code);
         table.insert(tool_name::GET_FILE_OUTLINE, handlers::get_file_outline);
         table.insert(tool_name::READ_SYMBOL, handlers::read_symbol);
-        table.insert(tool_name::LSP_DEFINITION, handlers::lsp_definition);
-        table.insert(tool_name::LSP_REFERENCES, handlers::lsp_references);
-        table.insert(tool_name::LSP_HOVER, handlers::lsp_hover);
+        // lsp_* 三工具不进同步表：server.rs 在 tools/call 层按名 async
+        // 分流到 handlers::lsp_dispatch（LSP 子进程往返是异步语义）。
         table
     })
 }
@@ -58,13 +57,20 @@ mod tests {
     use super::*;
     use codeidx_protocol::mcp::Content;
 
+    /// 同步路由表仅承载 8 个非 LSP 工具；lsp_* 三项由 server.rs 的
+    /// tools/call 层按名 async 分流到 handlers::lsp_dispatch。
     #[test]
-    fn all_11_tools_registered_and_match_specs() {
-        assert_eq!(route_table().len(), 11);
+    fn sync_table_holds_8_tools_lsp_routed_async() {
+        assert_eq!(route_table().len(), 8);
         for spec in codeidx_protocol::schema::TOOL_SPECS.iter() {
-            assert!(
+            let is_lsp = matches!(
+                spec.name,
+                tool_name::LSP_DEFINITION | tool_name::LSP_REFERENCES | tool_name::LSP_HOVER
+            );
+            assert_eq!(
                 route_table().contains_key(spec.name),
-                "missing handler: {}",
+                !is_lsp,
+                "unexpected routing for {}",
                 spec.name
             );
         }
@@ -76,22 +82,6 @@ mod tests {
         assert!(result.is_error);
         match &result.content[0] {
             Content::Text { text } => assert!(text.starts_with("error: unknown tool: ")),
-        }
-    }
-
-    #[test]
-    fn lsp_tools_stub_contract() {
-        let args = serde_json::json!({"path": "/tmp", "file_path": "x", "line": 1, "character": 0});
-        for name in [
-            tool_name::LSP_DEFINITION,
-            tool_name::LSP_REFERENCES,
-            tool_name::LSP_HOVER,
-        ] {
-            let result = dispatch(name, &args);
-            assert!(result.is_error, "{name} must be isError in Phase 1");
-            match &result.content[0] {
-                Content::Text { text } => assert_eq!(text, "error: LSP bridge not available yet"),
-            }
         }
     }
 
