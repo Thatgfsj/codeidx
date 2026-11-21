@@ -12,7 +12,7 @@ use std::sync::Once;
 use codeidx_protocol::{SearchHit, ToolError};
 use rusqlite::{params, Connection};
 
-use crate::embedder::{Embedder, EMBED_DIM};
+use crate::embedder::Embedder;
 use crate::store::{poisoned, sqlite_err, Store};
 use crate::tokens;
 
@@ -21,9 +21,12 @@ use crate::tokens;
 const RRF_K: f64 = 60.0;
 
 /// vec0 虚表 DDL：显式主键列 `chunk_id` 与 `chunks.id` 对齐。
-pub(crate) fn vec_table_ddl() -> String {
+///
+/// 维度 `dim` 来自 `Embedder::dim()`（CODEIDX_EMBED_MODEL 切换模型时
+/// 自适应：bge-small-zh 512 / bge-large-zh 1024，不固定 512）。
+pub(crate) fn vec_table_ddl(dim: usize) -> String {
     format!(
-        "CREATE VIRTUAL TABLE vec_chunks USING vec0(chunk_id integer primary key, embedding float[{EMBED_DIM}])"
+        "CREATE VIRTUAL TABLE vec_chunks USING vec0(chunk_id integer primary key, embedding float[{dim}])"
     )
 }
 
@@ -41,9 +44,10 @@ pub(crate) fn ensure_vec_registered() {
     });
 }
 
-/// 在新建的内存连接上建 vec0 虚表（enable_vector=true 时由 Store::new 调用）。
-pub(crate) fn init_vec_table(conn: &Connection) -> Result<(), rusqlite::Error> {
-    conn.execute_batch(vec_table_ddl().as_str())
+/// 在内存连接上建 vec0 虚表（首次注入 embedder 时由 Store::set_embedder
+/// 调用，维度取自嵌入器声明）。
+pub(crate) fn init_vec_table(conn: &Connection, dim: usize) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(vec_table_ddl(dim).as_str())
 }
 
 /// f32 向量 → 小端字节 blob（vec0 存储格式，探针路径 A 实证）。

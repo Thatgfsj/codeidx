@@ -1,9 +1,10 @@
 //! Store 主体：结构定义、生命周期与除检索外的全部读写方法。
 //!
 //! 并发模型：单 `Mutex<Connection>`，每个方法"拿锁 → 完成 → 放锁"，
-//! 无嵌套锁，跨线程共享无死锁（并发冒烟测试见 tests.rs）。
+//! 读嵌入器时先取快照并释放读锁，再获取连接锁。注入时持有连接锁至发布嵌入器。
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use codeidx_ast::{ParsedFile, SymbolKind};
@@ -18,8 +19,13 @@ use crate::vec;
 /// 内存索引库（Issue #4 契约）。全部方法 `&self`，可跨线程共享。
 pub struct Store {
     pub(crate) conn: Mutex<Connection>,
-    /// 向量开关：true 时建 vec0 虚表并在写入侧维护向量列（Issue #5）。
+    /// 向量开关：true 时首次注入 embedder 后建 vec0 虚表并维护向量列。
     pub(crate) enable_vector: bool,
+    /// vec_chunks 是否已按 `vec_dim` 建成（延迟建表：维度来自首次注入
+    /// 的 embedder，CODEIDX_EMBED_MODEL 切换模型时自适应）。
+    vec_ready: AtomicBool,
+    /// 已建 vec_chunks 的维度（0 = 未建）。
+    vec_dim: AtomicUsize,
     /// 嵌入器注入点（None = 纯 FTS5）。写入与检索只做快照式读取。
     pub(crate) embedder: RwLock<Option<Arc<dyn Embedder>>>,
 }
@@ -64,21 +70,21 @@ fn kind_to_lower(kind: SymbolKind) -> &'static str {
 impl Store {
     /// 新建内存库（硬约束：`Connection::open_in_memory`，不落任何磁盘文件）。
     ///
-    /// `enable_vector=true` 时先做 vec0 扩展的进程级幂等注册
-    /// （`vec::ensure_vec_registered`，探针路径 A），再建 `vec_chunks`
-    /// 虚表；失败返回 `Err` 交由上层降级，绝不 panic。
+    /// `enable_vector=true` 时做 vec0 扩展的进程级幂等注册
+    /// （`vec::ensure_vec_registered`，探针路径 A）。vec_chunks 虚表
+    /// 延迟到首次注入 embedder 时按 `Embedder::dim()` 动态创建
+    /// （CODEIDX_EMBED_MODEL 模型切换的维度自适应）。
     pub fn new(enable_vector: bool) -> Result<Store, ToolError> {
         if enable_vector {
             vec::ensure_vec_registered();
         }
         let conn = Connection::open_in_memory().map_err(sqlite_err)?;
         schema::init(&conn).map_err(sqlite_err)?;
-        if enable_vector {
-            vec::init_vec_table(&conn).map_err(sqlite_err)?;
-        }
         Ok(Store {
             conn: Mutex::new(conn),
             enable_vector,
+            vec_ready: AtomicBool::new(false),
+            vec_dim: AtomicUsize::new(0),
             embedder: RwLock::new(None),
         })
     }
@@ -88,21 +94,58 @@ impl Store {
         self.enable_vector
     }
 
-    /// 注入 / 撤除嵌入器（None = 纯 FTS5）。幂等：直接替换旧值。
-    ///
-    /// 撤除后 replace_file 仅停止写入新向量行（残留旧行在下次替换时
-    /// 由 purge 清理）；search_vector 统一报 disabled。
     /// 向量检索是否实际可用（开关开启且已注入 embedder）。
     /// handlers 层据此降级并把 mode 回显为实际执行模式（F2.5 可见性契约）。
     pub fn is_vector_ready(&self) -> bool {
         self.enable_vector && self.embedder_snapshot().is_some()
     }
 
+    /// 注入或撤除嵌入器。首次注入时建表，后续仅接受同维度的嵌入器。
+    /// 撤除后禁用向量检索，残留向量在后续替换或删除文件时清理。
     pub fn set_embedder(&self, e: Option<Arc<dyn Embedder>>) {
-        // 写锁中毒仅在持锁线程 panic 时发生，此时 Store 整体已不可用；
-        // 静默放弃注入比 panic 更符合"挂载永不中断"的硬约束。
+        let Some(embedder) = e else {
+            // 撤除：仅清空注入点，已建表与残留向量行的 purge 语义不变。
+            if let Ok(mut guard) = self.embedder.write() {
+                *guard = None;
+            }
+            return;
+        };
+        if !self.enable_vector {
+            // 开关关闭：注入无行为意义，仅记录（不建表、无向量写入）。
+            if let Ok(mut guard) = self.embedder.write() {
+                *guard = Some(embedder);
+            }
+            return;
+        }
+        let dim = embedder.dim();
+        // 在同一连接锁下判断、首次建表并发布，避免并发首次注入重复建表。
+        let Ok(conn) = self.conn.lock() else {
+            return;
+        };
+        if self.vec_ready.load(Ordering::Acquire) {
+            let want = self.vec_dim.load(Ordering::Acquire);
+            if dim != want {
+                tracing::warn!(
+                    got = dim,
+                    want,
+                    "embedder dim mismatch with existing vec_chunks; keeping previous embedder"
+                );
+                return;
+            }
+        } else {
+            if let Err(err) = vec::init_vec_table(&conn, dim) {
+                tracing::warn!(
+                    error = %sqlite_err(err).message,
+                    "vec_chunks table creation failed; embedder not injected"
+                );
+                return; // 注入被拒：向量层保持 disabled（FTS 不受影响）。
+            }
+            self.vec_dim.store(dim, Ordering::Release);
+            self.vec_ready.store(true, Ordering::Release);
+            tracing::debug!(dim, "vec_chunks table created");
+        }
         if let Ok(mut guard) = self.embedder.write() {
-            *guard = e;
+            *guard = Some(embedder);
         }
     }
 
@@ -137,7 +180,7 @@ impl Store {
             params![parsed.rel_path],
         )
         .map_err(sqlite_err)?;
-        if self.enable_vector {
+        if self.vec_ready.load(Ordering::Acquire) {
             tx.execute(
                 "DELETE FROM vec_chunks WHERE chunk_id IN (SELECT id FROM chunks WHERE rel_path = ?1)",
                 params![parsed.rel_path],
@@ -245,7 +288,7 @@ impl Store {
             params![rel],
         )
         .map_err(sqlite_err)?;
-        if self.enable_vector {
+        if self.vec_ready.load(Ordering::Acquire) {
             // 向量行同步删除（先于 chunks：子查询依赖 chunks 行）。
             tx.execute(
                 "DELETE FROM vec_chunks WHERE chunk_id IN (SELECT id FROM chunks WHERE rel_path = ?1)",
