@@ -30,8 +30,28 @@ jobs:
   # F1/F3 无模型依赖；F2 走模型缓存 + HuggingFace 可达性预检（失败即红，不静默跳过）。
   blackbox:
     runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: local
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.10'
+          cache: false
+      - name: install gopls
+        env:
+          # gopls v0.24.0 要求 Go >=1.27.0，仅安装时切换编译器。
+          GOTOOLCHAIN: go1.27.4
+          GOBIN: ${{ runner.temp }}/codeidx-go-bin
+        run: |
+          go install golang.org/x/tools/gopls@v0.24.0
+          printf '%s\n' "$GOBIN" >> "$GITHUB_PATH"
+      - name: install basedpyright
+        run: |
+          venv="$RUNNER_TEMP/codeidx-lsp-venv"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install 'basedpyright==1.40.2'
+          printf '%s\n' "$venv/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy, rust-analyzer   # bb_phase3 的 LSP 实测必需
@@ -42,7 +62,18 @@ jobs:
         run: node --version
       - name: bb_phase1 (F1.1-F1.15)
         run: node scripts/bb_phase1.mjs ./target/release/codeidx-mcp
-      - name: bb_phase3 (F3.1-F3.5)
+      - name: verify blackbox LSP tools on PATH
+        shell: bash
+        run: |
+          command -v go gopls basedpyright basedpyright-langserver
+          go version
+          test "$(go env GOVERSION)" = 'go1.26.10'
+          test "$(command -v gopls)" = "$RUNNER_TEMP/codeidx-go-bin/gopls"
+          test "$(command -v basedpyright)" = "$RUNNER_TEMP/codeidx-lsp-venv/bin/basedpyright"
+          test "$(command -v basedpyright-langserver)" = "$RUNNER_TEMP/codeidx-lsp-venv/bin/basedpyright-langserver"
+          gopls version | grep -Fx 'golang.org/x/tools/gopls v0.24.0'
+          basedpyright --version | grep -Fx 'basedpyright 1.40.2'
+      - name: bb_phase3 (F3.1-F3.7)
         run: node scripts/bb_phase3.mjs ./target/release/codeidx-mcp
       - name: model cache (bge-small-zh-v1.5)
         uses: actions/cache@v4
