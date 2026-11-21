@@ -24,7 +24,7 @@
    - 默认 `enable_vector=false`；仅当预感需要纯语义检索（自然语言描述找代码）才显式传 `enable_vector=true`。
 2. **建全局认知**：`get_repo_map(path, token_budget=3000)`。得到 PageRank 加权骨架：核心模块与高频引用符号排前。先读骨架，不读源文件正文。
    - 排查收窄到某几个文件后，传 `focus_files=[...]` 提升聚焦文件的符号权重。
-3. **定位**：`search_code(path, query, mode=..., top_k=8)`（top_k 上限 50，超取 50）。
+3. **定位**：`search_code(path, query, mode=..., top_k=8, token_budget=1200)`（top_k 上限 50；token_budget 区间 200..8000）。
    - 符号名 / 唯一标识 → `mode=keyword`
    - 业务语义（"处理重试的逻辑"这类）→ `mode=hybrid`（默认）
    - 检查 `degraded` 字段：true 即降级（见 §5），照常使用结果。
@@ -51,6 +51,8 @@
 | `vector` | 纯语义描述（自然语言找代码） | 仅向量 KNN；要求挂载时 `enable_vector=true` |
 
 降级判读（产物语义硬化）：向量未就绪（挂载时 `enable_vector=false` / 模型加载失败 / 环境变量 `CODEIDX_DISABLE_VECTOR=1`）时，vector / hybrid 请求**自动降级 keyword 且请求仍成功**。最直接判据是响应的 `degraded` 字段——true 即降级，`degraded_reason` 给出原因（`vector not enabled for this mount` / `CODEIDX_DISABLE_VECTOR=1` / `model init failed: ...`，三种之一）；`mode` 回显实际执行模式的既有语义保持一致（请求 hybrid 回显 keyword 同样意味着降级）。空结果时先看 `total_candidates`：>0 说明有索引、只是无命中，可换词或换模式重试；=0 才是无索引数据。
+
+预算双闸（产物紧凑化）：`search_code` 除 `top_k` 条数闸（默认 8、上限 50）外还有 `token_budget` 总量闸（默认 1200、区间 200..8000）。命中行文本逐数据行累计 tokens≈字符/4，超预算即截断并在元信息行如实计数——行文本首行 `# search hits=<shown> truncated_hits=<k> tokens≈<t>/budget=<b>`：`truncated_hits` 非 0 说明还有命中没装下，调大 `token_budget` 重取即可；与 `get_repo_map` 的 budget 语义对齐。产物形态：`search_code` 的 `results` 与 `get_file_outline` 均为紧凑行文本（元信息行 `# ...` 开头，数据行 TAB 分列），比 JSON 数组省 50%+ 结构税（键名不逐行重复）。
 
 ## 6. 系统提示词模板（可直接粘贴）
 

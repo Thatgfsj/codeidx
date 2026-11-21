@@ -91,9 +91,13 @@ pub struct SearchParams {
     /// 检索模式（默认 hybrid）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<SearchMode>,
-    /// 返回命中数上限（默认 8）。
+    /// 返回命中数上限（默认 8，上限 50）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub top_k: Option<u32>,
+    /// 结果 token 预算（默认 1200，区间 200..8000）：与 top_k 条数闸
+    /// 并列的总量闸，超预算的数据行被截断并计入 truncated_hits。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_budget: Option<u32>,
 }
 
 /// get_file_outline 参数。
@@ -246,13 +250,16 @@ pub struct SearchHit {
 
 /// search_code 结果。
 ///
-/// 降级显式 + 上下文防爆（产物语义硬化）：degraded / degraded_reason /
-/// total_candidates 恒出现；total_candidates 为本次挂载参与检索排序的
-/// 候选块总数（results 为空且 total_candidates>0 = 查询无命中而非无索引）。
+/// 产物紧凑化：results 为紧凑行文本（首行元信息 `# search hits=<shown>
+/// truncated_hits=<k> tokens≈<t>/budget=<b>`，次行列名，数据行
+/// `file<TAB>symbol<TAB>start<TAB>end<TAB>score<TAB>snippet`，score 四位
+/// 小数、snippet 内换行转义为字面 \n、symbol 缺省 "-"）。JSON 壳保留
+/// mode / degraded / degraded_reason / elapsed_ms / total_candidates
+/// （N=1 元数据）；降级显式与候选计数语义不变（产物语义硬化）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SearchResult {
-    /// 命中列表（得分降序）。
-    pub results: Vec<SearchHit>,
+    /// 命中行文本（紧凑格式，见类型文档）；空结果仅元信息行 + 列名行。
+    pub results: String,
     /// 实际生效的检索模式。
     pub mode: SearchMode,
     /// 检索耗时（毫秒）。
@@ -426,7 +433,7 @@ mod tests {
     #[test]
     fn search_sync_info_hardcoded_fields_always_present() {
         let search: Value = serde_json::to_value(&SearchResult {
-            results: Vec::new(),
+            results: String::new(),
             mode: SearchMode::Keyword,
             elapsed_ms: 0,
             degraded: false,
@@ -448,7 +455,7 @@ mod tests {
             );
         }
         assert_eq!(search["degraded_reason"], "");
-        assert_eq!(search["results"], serde_json::json!([]));
+        assert_eq!(search["results"], "");
 
         let sync: Value = serde_json::to_value(&SyncReport {
             added: 0,
@@ -532,17 +539,20 @@ mod tests {
     }
 
     #[test]
-    fn search_params_parse_optional_mode_and_top_k() {
+    fn search_params_parse_optional_mode_top_k_and_budget() {
         let params: SearchParams =
             serde_json::from_str(r#"{"path":"/r","query":"unicorn"}"#).unwrap();
         assert_eq!(params.mode, None);
         assert_eq!(params.top_k, None);
+        assert_eq!(params.token_budget, None);
 
-        let full: SearchParams =
-            serde_json::from_str(r#"{"path":"/r","query":"u","mode":"keyword","top_k":5}"#)
-                .unwrap();
+        let full: SearchParams = serde_json::from_str(
+            r#"{"path":"/r","query":"u","mode":"keyword","top_k":5,"token_budget":600}"#,
+        )
+        .unwrap();
         assert_eq!(full.mode, Some(SearchMode::Keyword));
         assert_eq!(full.top_k, Some(5));
+        assert_eq!(full.token_budget, Some(600));
     }
 
     #[test]
@@ -652,14 +662,7 @@ mod tests {
             }],
         });
         round_trip(&SearchResult {
-            results: vec![SearchHit {
-                file: "src/a.rs".into(),
-                symbol: Some("f".into()),
-                start_line: 1,
-                end_line: 2,
-                score: 0.5,
-                snippet: "fn f()".into(),
-            }],
+            results: "# search hits=1 truncated_hits=0 tokens≈1/budget=1200".into(),
             mode: SearchMode::Hybrid,
             elapsed_ms: 9,
             degraded: false,

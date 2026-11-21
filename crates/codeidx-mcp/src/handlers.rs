@@ -13,9 +13,9 @@ use serde_json::Value;
 
 use codeidx_ast::{detect_lang, repo_map, Lang};
 use codeidx_protocol::tools::{
-    FileOutline, HoverReport, Location, LocationsReport, LspPositionParams, MountParams,
-    OutlineParams, PathParams, ProjectsReport, ReadSymbolParams, RepoMapParams, SearchMode,
-    SearchParams, SearchResult,
+    HoverReport, Location, LocationsReport, LspPositionParams, MountParams, OutlineEntry,
+    OutlineParams, PathParams, ProjectsReport, ReadSymbolParams, RepoMapParams, SearchHit,
+    SearchMode, SearchParams, SearchResult,
 };
 use codeidx_protocol::{ToolError, ToolPayload};
 
@@ -94,6 +94,70 @@ fn clamp_top_k(raw: Option<u32>) -> usize {
     raw.unwrap_or(8).min(50) as usize
 }
 
+/// token_budget 硬 clamp（紧凑化第三闸）：缺省 1200、区间 200..8000。
+fn clamp_token_budget(raw: Option<u32>) -> usize {
+    raw.unwrap_or(1200).clamp(200, 8000) as usize
+}
+
+/// outline 紧凑行文本（产物紧凑化）：
+/// 首行 `# outline file=<rel_path> symbols=<n>`，数据行
+/// `kind<TAB>name<TAB>start<TAB>end<TAB>sig`；sig 为最后一列，内含
+/// tab 时替换为空格防错位；空符号文件头行 symbols=0 后无数据行。
+fn outline_to_text(file: &str, entries: &[OutlineEntry]) -> String {
+    let mut out = format!("# outline file={file} symbols={}\n", entries.len());
+    for e in entries {
+        let sig = e.sig.replace('\t', " ");
+        out.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\n",
+            e.kind, e.name, e.start_line, e.end_line, sig
+        ));
+    }
+    out
+}
+
+/// search 命中行文本（产物紧凑化）：首行元信息
+/// `# search hits=<shown> truncated_hits=<k> tokens≈<t>/budget=<b>`，
+/// 次行列名，数据行 `file<TAB>symbol<TAB>start<TAB>end<TAB>score<TAB>snippet`。
+/// - score 一律四位小数（排序语义保留）；
+/// - snippet 列内换行转义为字面 \n 两字符、tab 替换空格（保行结构）；
+/// - symbol 缺省 "-" 占位（列不缺位）；
+/// - 逐数据行累计 (len+1)/4，超出 token_budget 即停止追加并
+///   truncated_hits 计数（元信息行与列名行不计入预算）。
+fn hits_to_lines(hits: &[SearchHit], token_budget: usize) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    let mut chars = 0usize;
+    let mut truncated_hits = 0usize;
+    for hit in hits {
+        let symbol = hit.symbol.as_deref().unwrap_or("-");
+        let snippet = hit.snippet.replace('\n', "\\n").replace('\t', " ");
+        let line = format!(
+            "{}\t{}\t{}\t{}\t{:.4}\t{}",
+            hit.file, symbol, hit.start_line, hit.end_line, hit.score, snippet
+        );
+        let cost = (chars + line.len() + 1).div_ceil(4);
+        if cost > token_budget {
+            truncated_hits = hits.len() - lines.len();
+            break;
+        }
+        chars += line.len() + 1;
+        lines.push(line);
+    }
+    let tokens = chars.div_ceil(4);
+    let mut out = format!(
+        "# search hits={} truncated_hits={} tokens≈{}/budget={}\n",
+        lines.len(),
+        truncated_hits,
+        tokens,
+        token_budget
+    );
+    out.push_str("file\tsymbol\tstart\tend\tscore\tsnippet\n");
+    for line in &lines {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
 /// 降级原因（产物语义硬化）：mount 时已降级 → 持久化原因
 /// （CODEIDX_DISABLE_VECTOR=1 / model init failed: ...）；用户本就
 /// 未请求向量 → 固定文案。keyword 模式不调用本函数（无降级）。
@@ -109,6 +173,7 @@ pub fn search_code(args: &Value) -> Result<ToolPayload, ToolError> {
     let params: SearchParams = parse_args(args)?;
     let mode = params.mode.unwrap_or(SearchMode::Hybrid);
     let top_k = clamp_top_k(params.top_k);
+    let token_budget = clamp_token_budget(params.token_budget);
     MANAGER.with_project(Path::new(&params.path), |ctx| {
         let started = Instant::now();
         let effective = if ctx.store.is_vector_ready() {
@@ -133,8 +198,10 @@ pub fn search_code(args: &Value) -> Result<ToolPayload, ToolError> {
         }?;
         // 候选块总数：parsed 缓存与 store 同步维护（mount/sync 一致性契约）。
         let total_candidates: u64 = ctx.parsed.values().map(|pf| pf.chunks.len() as u64).sum();
+        // 紧凑行文本（产物紧凑化）：top_k 条数闸之后再过 token_budget 总量闸。
+        let results_text = hits_to_lines(&results, token_budget);
         Ok(report_to_value(&SearchResult {
-            results,
+            results: results_text,
             mode: effective,
             elapsed_ms: started.elapsed().as_millis() as u64,
             degraded,
@@ -144,7 +211,8 @@ pub fn search_code(args: &Value) -> Result<ToolPayload, ToolError> {
     })
 }
 
-/// get_file_outline：store.file_outline；文件未索引报执行错误。
+/// get_file_outline：store.file_outline → 紧凑行文本（产物紧凑化）；
+/// 文件未索引报执行错误（文案不变）。
 pub fn get_file_outline(args: &Value) -> Result<ToolPayload, ToolError> {
     let params: OutlineParams = parse_args(args)?;
     MANAGER.with_project(Path::new(&params.path), |ctx| {
@@ -155,10 +223,10 @@ pub fn get_file_outline(args: &Value) -> Result<ToolPayload, ToolError> {
             )));
         }
         let symbols = ctx.store.file_outline(&params.file_path)?;
-        Ok(report_to_value(&FileOutline {
-            file: params.file_path.clone(),
-            symbols,
-        }))
+        Ok(ToolPayload::Text(outline_to_text(
+            &params.file_path,
+            &symbols,
+        )))
     })
 }
 
@@ -462,14 +530,18 @@ mod tests {
             "top_k": 8
         })));
         assert_eq!(value["mode"], "keyword");
-        let hits = value["results"].as_array().unwrap();
-        assert!(!hits.is_empty());
+        let results = value["results"].as_str().expect("results compact text");
+        let data_rows: Vec<&str> = results
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.starts_with("file\t"))
+            .collect();
+        assert!(!data_rows.is_empty(), "at least one data row: {results}");
         // F1.7 裁决已落地（store 精确标识符提升 EXACT_QUERY_BOOST）：
-        // 完整 query 原样出现的定义块必居 top1，bm25 短块偏置不再压过定义。
+        // 完整 query 原样出现的定义块必居 top1（首个数据行）。
         assert!(
-            hits.first()
-                .is_some_and(|h| h["file"] == "src/lib.rs" && h["symbol"] == "unicorn_marker_fn"),
-            "unicorn chunk must rank top-1: {hits:?}"
+            data_rows[0].starts_with("src/lib.rs\tunicorn_marker_fn\t"),
+            "top row must be unicorn definition: {}",
+            data_rows[0]
         );
         assert!(value["elapsed_ms"].is_u64());
 
@@ -489,7 +561,13 @@ mod tests {
             &json!({"path": root, "query": "helper_spinner"}),
         ));
         assert_eq!(value["mode"], "keyword");
-        assert!(!value["results"].as_array().unwrap().is_empty());
+        assert!(
+            value["results"]
+                .as_str()
+                .unwrap_or("")
+                .contains("helper_spinner"),
+            "degraded keyword still returns hits"
+        );
         assert_eq!(value["degraded"], true, "hybrid degraded to keyword");
         assert_eq!(
             value["degraded_reason"], "vector not enabled for this mount",
@@ -503,7 +581,14 @@ mod tests {
             &json!({"path": root, "query": "spin", "mode": "vector"}),
         ));
         assert_eq!(value["mode"], "keyword");
-        assert!(!value["results"].as_array().unwrap().is_empty());
+        // query "spin" 的独立词命中在 src/main.rs（let spin = ...）。
+        assert!(
+            value["results"]
+                .as_str()
+                .unwrap_or("")
+                .contains("src/main.rs"),
+            "vector-degraded search still returns keyword hits"
+        );
         assert_eq!(value["degraded"], true);
         assert_eq!(
             value["degraded_reason"],
@@ -523,6 +608,159 @@ mod tests {
             clamp_top_k(Some(0)),
             0,
             "explicit 0 is an empty-result request"
+        );
+    }
+
+    /// token_budget 硬 clamp：缺省 1200、下限 200、上限 8000。
+    #[test]
+    fn token_budget_hard_clamped_to_range() {
+        assert_eq!(clamp_token_budget(None), 1200, "default 1200");
+        assert_eq!(clamp_token_budget(Some(100)), 200, "below floor clamps up");
+        assert_eq!(
+            clamp_token_budget(Some(99_999)),
+            8000,
+            "above ceiling clamps down"
+        );
+        assert_eq!(clamp_token_budget(Some(200)), 200, "floor boundary stays");
+        assert_eq!(
+            clamp_token_budget(Some(8000)),
+            8000,
+            "ceiling boundary stays"
+        );
+        assert_eq!(
+            clamp_token_budget(Some(600)),
+            600,
+            "in-range passes through"
+        );
+    }
+
+    /// hits_to_lines：元信息行 + 列名行 + 数据行；score 四位小数、
+    /// symbol 缺省 "-"、snippet 换行转义、预算截断计数真实。
+    #[test]
+    fn hits_to_lines_compact_rows_and_budget() {
+        let hits = vec![
+            SearchHit {
+                file: "src/a.rs".into(),
+                symbol: Some("f".into()),
+                start_line: 1,
+                end_line: 2,
+                score: 0.5,
+                snippet: "fn f() {
+    inner"
+                    .into(),
+            },
+            SearchHit {
+                file: "src/b.rs".into(),
+                symbol: None,
+                start_line: 3,
+                end_line: 4,
+                score: 1.23456789,
+                snippet: "top level".into(),
+            },
+        ];
+        let out = hits_to_lines(&hits, 1200);
+        let lines: Vec<&str> = out.lines().collect();
+        assert!(
+            lines[0].starts_with("# search hits=2 truncated_hits=0 tokens≈")
+                && lines[0].ends_with("/budget=1200"),
+            "header: {}",
+            lines[0]
+        );
+        assert_eq!(lines[1], "file	symbol	start	end	score	snippet");
+        assert!(
+            lines[2].starts_with("src/a.rs	f	1	2	0.5000	fn f() {"),
+            "row: {}",
+            lines[2]
+        );
+        // snippet 换行转义为字面 backslash-n 两字符，行结构完整。
+        assert!(
+            lines[2].contains("fn f() {\\n    inner"),
+            "escaped: {}",
+            lines[2]
+        );
+        // symbol 缺省 "-" 且 score 四位小数。
+        assert!(
+            lines[3].starts_with("src/b.rs	-	3	4	1.2346	"),
+            "row: {}",
+            lines[3]
+        );
+
+        // 预算闸：单行成本约 32 字符/4=8 tokens；预算 200 只放得下
+        // 大量行——改用两条长行验证截断计数（第一条 ~260 tokens 即超 200）。
+        let long_hits = vec![
+            SearchHit {
+                file: "src/long_a.rs".into(),
+                symbol: Some("big".into()),
+                start_line: 1,
+                end_line: 9,
+                score: 2.0,
+                snippet: "x".repeat(900),
+            },
+            SearchHit {
+                file: "src/long_b.rs".into(),
+                symbol: Some("small".into()),
+                start_line: 1,
+                end_line: 9,
+                score: 1.0,
+                snippet: "y".repeat(50),
+            },
+        ];
+        let truncated = hits_to_lines(&long_hits, 200);
+        assert!(
+            truncated.contains("# search hits=0 truncated_hits=2"),
+            "budget cuts all rows: {truncated}"
+        );
+        // 只放第一条（第一条 ~240 tokens 已超 200）。
+        let partial = hits_to_lines(&long_hits, 240);
+        assert!(
+            partial.contains("# search hits=1 truncated_hits=1"),
+            "one row survives: {}",
+            partial.lines().next().unwrap()
+        );
+        assert!(partial.contains("src/long_a.rs	"));
+
+        // 空 hits：仅元信息行 + 列名行，计数真实为零。
+        let empty = hits_to_lines(&[], 1200);
+        assert_eq!(
+            empty,
+            "# search hits=0 truncated_hits=0 tokens≈0/budget=1200
+file	symbol	start	end	score	snippet
+"
+        );
+    }
+
+    /// outline_to_text：头行计数 + tab 分列 + sig 内 tab 防御 + 空符号文件。
+    #[test]
+    fn outline_to_text_rows_and_tab_guard() {
+        let entries = vec![
+            OutlineEntry {
+                kind: "fn".into(),
+                name: "f".into(),
+                start_line: 1,
+                end_line: 2,
+                sig: "fn f(a: &str)".into(),
+            },
+            OutlineEntry {
+                kind: "struct".into(),
+                name: "S".into(),
+                start_line: 4,
+                end_line: 5,
+                sig: "struct S {	a: u32,	}".into(),
+            },
+        ];
+        let out = outline_to_text("src/a.rs", &entries);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "# outline file=src/a.rs symbols=2");
+        assert_eq!(lines[1], "fn	f	1	2	fn f(a: &str)");
+        // sig 内 tab 替换空格（最后一列防错位）。
+        assert_eq!(lines[2], "struct	S	4	5	struct S { a: u32, }");
+
+        // 空符号文件：头行 symbols=0 后无数据行（真实标记空）。
+        let empty = outline_to_text("src/empty.rs", &[]);
+        assert_eq!(
+            empty,
+            "# outline file=src/empty.rs symbols=0
+"
         );
     }
 
@@ -593,17 +831,29 @@ mod tests {
         let root = temp_project("outline");
         mount_project(&json!({"path": root})).expect("mount");
 
-        let value = json_of(get_file_outline(
+        // 紧凑行文本：首行元信息 + tab 分列数据行。
+        let text = text_of(get_file_outline(
             &json!({"path": root, "file_path": "src/lib.rs"}),
         ));
-        assert_eq!(value["file"], "src/lib.rs");
-        let symbols = value["symbols"].as_array().unwrap();
-        let unicorn = symbols
-            .iter()
-            .find(|s| s["name"] == "unicorn_marker_fn")
-            .expect("unicorn_marker_fn in outline");
-        assert_eq!(unicorn["kind"], "fn");
-        assert!(unicorn["start_line"].as_u64().unwrap() >= 1);
+        let header = text.lines().next().unwrap();
+        assert!(
+            header.starts_with("# outline file=src/lib.rs symbols="),
+            "header: {header}"
+        );
+        assert!(
+            text.contains("fn\tunicorn_marker_fn\t"),
+            "unicorn row present: {text}"
+        );
+        assert!(text.contains("struct\tGoldConfig\t"), "GoldConfig row");
+        // 数据行数与头行 symbols 计数一致。
+        let declared: usize = header
+            .rsplit('=')
+            .next()
+            .unwrap()
+            .parse()
+            .expect("symbols count numeric");
+        let rows = text.lines().filter(|l| !l.starts_with('#')).count();
+        assert_eq!(rows, declared, "rows match header count: {text}");
 
         let value = json_of(read_symbol(&json!({
             "path": root,

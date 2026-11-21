@@ -83,8 +83,8 @@ EOF
 | `list_mounted_projects` | — | 列出当前已挂载的项目及其索引规模 |
 | `sync_project` | `path` | 增量同步，反映文件系统的增 / 改 / 删；`failed`/`failed_files`（上限 20）真实列出重建失败文件 |
 | `get_repo_map` | `path`；`focus_files?`；`token_budget?`（默认 3000） | PageRank 加权骨架图；首行元信息头 `# repo_map symbols/shown/budget/used_tokens/truncated`，未索引聚焦文件逐个标记 `# focus_files ignored: <path>` |
-| `search_code` | `path`；`query`；`mode?`（hybrid/keyword/vector，默认 hybrid）；`top_k?`（默认 8，上限 50） | 三模式代码检索；`degraded`/`degraded_reason` 显式标记降级，`total_candidates` 给出候选块总数 |
-| `get_file_outline` | `path`；`file_path` | 单个文件的符号大纲（无函数体） |
+| `search_code` | `path`；`query`；`mode?`（hybrid/keyword/vector，默认 hybrid）；`top_k?`（默认 8，上限 50）；`token_budget?`（默认 1200，200..8000） | 三模式检索；`results` 为紧凑行文本（元信息行 + 列名行 + 数据行），`truncated_hits` 如实计数预算截断，`degraded`/`total_candidates` 元数据保留 |
+| `get_file_outline` | `path`；`file_path` | 紧凑行文本大纲：首行 `# outline file=<rel> symbols=<n>`，数据行 `kind<TAB>name<TAB>start<TAB>end<TAB>sig`（无函数体） |
 | `read_symbol` | `path`；`file_path`；`symbol_name` | 指定符号的完整实现代码 |
 | `lsp_definition` | `path`；`file_path`；`line`；`character` | 跳转到指定位置的符号定义 |
 | `lsp_references` | `path`；`file_path`；`line`；`character` | 列出指定位置符号的全部引用 |
