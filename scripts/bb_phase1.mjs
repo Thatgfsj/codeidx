@@ -39,10 +39,11 @@ async function main() {
 
   await runCase('F1.1', 'initialize 握手', async () => {
     const caps = await c.initialize();
-    expect(!!caps, 'capabilities returned');
+    expectEq(caps.capabilities?.tools?.listChanged, false, 'tool catalog is static');
+    expect(!Object.hasOwn(caps, 'instructions'), 'initialize has no agent instructions');
   });
 
-  await runCase('F1.2', 'tools/list 11 工具齐全', async () => {
+  await runCase('F1.2', '挂载前 tools/list 已列出全部 11 个工具', async () => {
     const res = await c.call('tools/list');
     const names = (res.result?.tools ?? []).map(t => t.name).sort();
     expectEq(names.length, 11, 'tool count');
@@ -60,6 +61,15 @@ async function main() {
     expect(r.json.files > 5, 'files > 5, got ' + r.json.files);
     expect(r.json.symbols > 8, 'symbols > 8, got ' + r.json.symbols);
     expect(typeof r.json.elapsed_ms === 'number', 'elapsed_ms present');
+  });
+
+  await runCase('F1.8', '挂载后直接 read_symbol 返回完整实现体', async () => {
+    const r = await c.tool('read_symbol', { path: work, file_path: 'src/lib.rs', symbol_name: 'unicorn_marker_fn' });
+    expect(!r.isError, 'read_symbol ok: ' + r.text);
+    expectEq(r.json.file, 'src/lib.rs', 'file');
+    expectEq(r.json.name, 'unicorn_marker_fn', 'name');
+    expect(r.json.code.includes('unicorn_marker_fn'), 'code contains signature');
+    expect((r.json.code.match(/\n/g) ?? []).length >= 2, 'multi-line body returned, not snippet');
   });
 
   await runCase('F1.4', 'list_mounted_projects', async () => {
@@ -102,15 +112,6 @@ async function main() {
     expect(top.startsWith('src/lib.rs	'), 'hit in src/lib.rs, got ' + top);
     expect(top.includes('	unicorn_marker_fn	') || top.includes('	-	'), 'symbol field sane: ' + top);
     expect(/^src\/lib\.rs	[^	]*	[1-9][0-9]*/.test(top), 'start_line valid: ' + top);
-  });
-
-  await runCase('F1.8', 'read_symbol 完整实现体', async () => {
-    const r = await c.tool('read_symbol', { path: work, file_path: 'src/lib.rs', symbol_name: 'unicorn_marker_fn' });
-    expect(!r.isError, 'read_symbol ok: ' + r.text);
-    expectEq(r.json.file, 'src/lib.rs', 'file');
-    expectEq(r.json.name, 'unicorn_marker_fn', 'name');
-    expect(r.json.code.includes('unicorn_marker_fn'), 'code contains signature');
-    expect((r.json.code.match(/\n/g) ?? []).length >= 2, 'multi-line body returned, not snippet');
   });
 
   await runCase('F1.11', '未挂载路径优雅报错', async () => {
