@@ -145,7 +145,11 @@ impl<'a> Extractor<'a> {
             | (Lang::Java, "interface_declaration")
             | (Lang::Java, "enum_declaration")
             | (Lang::Cpp, "class_specifier")
-            | (Lang::Cpp, "struct_specifier") => self.name_text(node),
+            | (Lang::Cpp, "struct_specifier")
+            | (Lang::Dart, "class_declaration")
+            | (Lang::Dart, "mixin_declaration")
+            | (Lang::Dart, "extension_declaration")
+            | (Lang::Dart, "enum_declaration") => self.name_text(node),
             _ => None,
         }
     }
@@ -175,10 +179,11 @@ impl<'a> Extractor<'a> {
             Lang::Java => self.handle_java_def(node, kind, parent),
             Lang::C => self.handle_c_def(node, kind),
             Lang::Cpp => self.handle_cpp_def(node, kind, parent),
-            // 五门扩展语言的 def 提取由并行语言包任务交付
-            // （teammates c/a/d）；交付前 detect_lang 未映射对应扩展名，
+            Lang::Dart => self.handle_dart_def(node, kind, parent),
+            // 四门扩展语言的 def 提取由并行语言包任务交付
+            // （teammates a/d）；交付前 detect_lang 未映射对应扩展名，
             // 本分支运行时不可达。
-            Lang::Dart | Lang::Kotlin | Lang::CSharp | Lang::Php | Lang::Html => {
+            Lang::Kotlin | Lang::CSharp | Lang::Php | Lang::Html => {
                 unreachable!("extractor for {:?} not yet delivered", self.lang)
             }
         }
@@ -514,6 +519,135 @@ impl<'a> Extractor<'a> {
             }
             _ => {}
         }
+    }
+
+    fn handle_dart_def(&mut self, node: Node, kind: &str, parent: Option<String>) {
+        match kind {
+            "function_declaration" => {
+                let name = self.dart_signature_name(node);
+                self.push_symbol(
+                    SymbolKind::Fn,
+                    &name.unwrap_or_default(),
+                    node,
+                    None,
+                    self.signature(node),
+                );
+            }
+            "class_declaration" => {
+                let name = self.name_text(node);
+                self.push_symbol(
+                    SymbolKind::Class,
+                    &name.unwrap_or_default(),
+                    node,
+                    parent,
+                    self.signature(node),
+                );
+            }
+            "enum_declaration" => {
+                let name = self.name_text(node);
+                self.push_symbol(
+                    SymbolKind::Enum,
+                    &name.unwrap_or_default(),
+                    node,
+                    None,
+                    self.signature(node),
+                );
+            }
+            // mixin：无字段、声明式可复用行为集合，语义与 Rust trait
+            // 同族，映射为 Trait（申报项，见交付报告）。
+            "mixin_declaration" => {
+                let name = self.name_text(node);
+                self.push_symbol(
+                    SymbolKind::Trait,
+                    &name.unwrap_or_default(),
+                    node,
+                    None,
+                    self.signature(node),
+                );
+            }
+            // extension：对已有类型的静态扩展块，非类型定义，归 Other
+            // （申报项）；其成员方法照常提取（parent = extension 名）。
+            "extension_declaration" => {
+                let name = self.name_text(node);
+                self.push_symbol(
+                    SymbolKind::Other,
+                    &name.unwrap_or_default(),
+                    node,
+                    None,
+                    self.signature(node),
+                );
+            }
+            "method_declaration" => {
+                let name = self.dart_signature_name(node);
+                self.push_symbol(
+                    SymbolKind::Method,
+                    &name.unwrap_or_default(),
+                    node,
+                    parent,
+                    self.signature(node),
+                );
+            }
+            "type_alias" => {
+                let name = self.name_text(node);
+                self.push_symbol(
+                    SymbolKind::Type,
+                    &name.unwrap_or_default(),
+                    node,
+                    None,
+                    self.signature(node),
+                );
+            }
+            "top_level_variable_declaration" => {
+                if let Some(name) = self.dart_const_name(node) {
+                    self.push_symbol(SymbolKind::Const, &name, node, None, self.signature(node));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Dart 复合签名名：function_declaration / method_declaration 的
+    /// 名字藏在内嵌 function_signature 中（method 还多包一层
+    /// method_signature）。
+    fn dart_signature_name(&self, node: Node) -> Option<String> {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "function_signature" {
+                if let Some(n) = child.child_by_field_name("name") {
+                    return Some(self.text_of(n));
+                }
+                let mut c2 = child.walk();
+                for g in child.children(&mut c2) {
+                    if is_name_kind(g.kind()) {
+                        return Some(self.text_of(g));
+                    }
+                }
+            }
+            if child.kind() == "method_signature" {
+                if let Some(n) = self.dart_signature_name(child) {
+                    return Some(n);
+                }
+            }
+        }
+        None
+    }
+
+    /// Dart 顶层 const 名：深搜 static_final_declaration 的 name 字段
+    ///（经 dump 探针验证：top_level_variable_declaration >
+    /// static_final_declaration_list > static_final_declaration(name)）。
+    fn dart_const_name(&self, node: Node) -> Option<String> {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "static_final_declaration" {
+                if let Some(n) = child.child_by_field_name("name") {
+                    return Some(self.text_of(n));
+                }
+            }
+            if let Some(n) = self.dart_const_name(child) {
+                return Some(n);
+            }
+        }
+        None
     }
 
     // ---- 名称与签名辅助 ----

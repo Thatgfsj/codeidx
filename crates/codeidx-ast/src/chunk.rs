@@ -195,4 +195,31 @@ mod tests {
         let pf = parse_file(Lang::Python, "empty.py", "");
         assert!(pf.chunks.is_empty());
     }
+
+    #[test]
+    fn dart_chunks_use_slash_comment_header() {
+        let base = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/dart-project/"
+        );
+        let text =
+            std::fs::read_to_string(format!("{base}lib.dart")).expect("dart fixture missing");
+        let pf = parse_file(Lang::Dart, "lib.dart", &text);
+        let marker = pf
+            .chunks
+            .iter()
+            .find(|c| c.symbol.as_deref() == Some("dart_unique_marker_fn"))
+            .expect("marker chunk");
+        assert!(marker
+            .text
+            .starts_with("// file: lib.dart symbol: dart_unique_marker_fn"));
+        assert_eq!(marker.content_hash.len(), 64);
+        assert_eq!(marker.content_hash, blake3_hex(&marker.text));
+        let fallback = pf
+            .chunks
+            .iter()
+            .find(|c| c.symbol.is_none())
+            .expect("fallback chunk");
+        assert!(fallback.text.starts_with("// file: lib.dart symbol: file"));
+    }
 }

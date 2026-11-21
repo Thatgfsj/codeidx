@@ -45,7 +45,7 @@ ast, protocol  // 叶子 crate，无内部依赖
 
 - tokio（rt-multi-thread + io + process + signal）、dashmap、rayon
 - ignore（gitignore 感知遍历）、blake3（内容哈希）
-- tree-sitter + grammars：rust / python / typescript(tsx 含 js) / go / java / c / cpp（Phase 1 至少覆盖 rust、python、typescript/javascript；go/java/c/cpp 随 C 任务进度交付，不得阻塞 Phase 1 验收）
+- Tree-sitter 语法索引：Rust、Python、TypeScript/JavaScript、Go、Java、C/C++、Dart。Dart 的定义和检索不依赖 SDK；精确跳转另需 PATH 上的 `dart language-server`，尚无实机 Dart LSP 验证。
 - rusqlite（features = ["bundled", "fts5"]）、sqlite-vec（Phase 2，静态链接）、fastembed（Phase 2，懒加载全局单例）
 - LSP 子进程：tokio::process::Command + stdio JSON-RPC
 

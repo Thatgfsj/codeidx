@@ -9,7 +9,7 @@ use crate::types::Lang;
 
 /// 按文件扩展名推断语言。
 ///
-/// 覆盖 `.rs/.py/.ts/.tsx/.js/.jsx/.mjs/.go/.java/.c/.h/.cpp/.cc/.hpp`；
+/// 覆盖 `.rs/.py/.ts/.tsx/.js/.jsx/.mjs/.go/.java/.c/.h/.cpp/.cc/.hpp/.dart`；
 /// 其余扩展名返回 `None`。JavaScript 复用 TypeScript 的 TSX 变体解析。
 pub fn detect_lang(path: &str) -> Option<Lang> {
     let ext = path.rsplit('.').next()?;
@@ -26,6 +26,7 @@ pub fn detect_lang(path: &str) -> Option<Lang> {
         "java" => Some(Lang::Java),
         "c" | "h" => Some(Lang::C),
         "cpp" | "cc" | "hpp" => Some(Lang::Cpp),
+        "dart" => Some(Lang::Dart),
         _ => None,
     }
 }
@@ -42,10 +43,11 @@ pub fn language_of(lang: Lang) -> Language {
         Lang::Java => tree_sitter_java::LANGUAGE.into(),
         Lang::C => tree_sitter_c::LANGUAGE.into(),
         Lang::Cpp => tree_sitter_cpp::LANGUAGE.into(),
-        // 五门扩展语言（Dart/Kotlin/CSharp/Php/Html）的 grammar 由并行
-        // 语言包任务交付（teammates c/a/d）；交付前 detect_lang 尚未映射
-        // 对应扩展名，本分支运行时不可达，交付时逐个替换为真实 grammar。
-        Lang::Dart | Lang::Kotlin | Lang::CSharp | Lang::Php | Lang::Html => {
+        Lang::Dart => tree_sitter_dart::LANGUAGE.into(),
+        // 四门扩展语言（Kotlin/CSharp/Php/Html）的 grammar 由并行语言包
+        // 任务交付（teammates a/d）；交付前 detect_lang 尚未映射对应扩展
+        // 名，本分支运行时不可达，交付时逐个替换为真实 grammar。
+        Lang::Kotlin | Lang::CSharp | Lang::Php | Lang::Html => {
             unreachable!("extractor for {lang:?} not yet delivered")
         }
     }
@@ -84,6 +86,8 @@ mod tests {
         assert_eq!(detect_lang("a.cpp"), Some(Lang::Cpp));
         assert_eq!(detect_lang("a.cc"), Some(Lang::Cpp));
         assert_eq!(detect_lang("a.hpp"), Some(Lang::Cpp));
+        assert_eq!(detect_lang("a.dart"), Some(Lang::Dart));
+        assert_eq!(detect_lang("/x/y/main.dart"), Some(Lang::Dart));
     }
 
     #[test]
@@ -118,6 +122,7 @@ mod tests {
             Lang::Java,
             Lang::C,
             Lang::Cpp,
+            Lang::Dart,
         ] {
             let mut p = tree_sitter::Parser::new();
             p.set_language(&language_of(lang)).expect("grammar load");
