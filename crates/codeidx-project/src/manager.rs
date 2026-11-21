@@ -157,7 +157,7 @@ impl ProjectManager {
                     files: ctx.files.len() as u64,
                     symbols: ctx.store.stats().symbols,
                     lsps: Vec::new(), // handlers 层按 LSP 桥活动态填充。
-                    vector: ctx.store.is_vector_enabled(),
+                    vector: ctx.store.is_vector_ready(),
                     vector_degraded: ctx.vector_degraded,
                     vector_degraded_reason: ctx.vector_degraded_reason.clone(),
                 }

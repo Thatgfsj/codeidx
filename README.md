@@ -137,6 +137,7 @@ codeidx-mcp 走 stdio 上的 JSON-RPC 2.0，可被任意 MCP 客户端（AI Agen
 |---|---|---|
 | `CODEIDX_LSP_IDLE_SECS` | 300 | LSP 子进程空闲回收秒数；超时未用的语言服务器自动 kill，下次调用再冷启动 |
 | `CODEIDX_DISABLE_VECTOR` | 未设置 | 设为 `1` 强制纯 FTS5：vector / hybrid 请求一律降级 keyword，`mode` 回显实际执行模式 |
+| `CODEIDX_EMBED_MODEL` | `bgesmallzhv15` | 向量模型，支持 `bgelargezhv15`（1024 维，真实推理与资源占用待验收）。变更后需重启进程。 |
 | `RUST_LOG` | `info` | tracing 日志过滤（如 `codeidx=debug`）；日志全部写 stderr，绝不污染 stdout |
 
 ### 产物格式哲学：为 token 而生

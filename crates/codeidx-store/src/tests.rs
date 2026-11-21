@@ -406,8 +406,14 @@ struct MockEmbedder {
 
 impl MockEmbedder {
     fn new() -> MockEmbedder {
+        MockEmbedder::new_with_dim(512)
+    }
+
+    /// 指定维度构造（维度自适应测试用：验证 vec_chunks 按注入的
+    /// `dim()` 动态建表，而非固定 512）。
+    fn new_with_dim(dim: usize) -> MockEmbedder {
         MockEmbedder {
-            dim: 512,
+            dim,
             texts_embedded: AtomicUsize::new(0),
         }
     }
@@ -520,6 +526,70 @@ fn vector_disabled_and_missing_embedder_error_paths() {
         store2.search_hybrid("unicorn", 8).unwrap(),
         store2.search_keyword("unicorn", 8).unwrap()
     );
+}
+
+#[test]
+fn vector_ddl_follows_mock_dimension() {
+    for dim in [512, 1024] {
+        let store = Store::new(true).unwrap();
+        let sql = "SELECT sql FROM sqlite_schema WHERE name = 'vec_chunks'";
+        assert!(!store
+            .conn
+            .lock()
+            .unwrap()
+            .prepare(sql)
+            .unwrap()
+            .exists([])
+            .unwrap());
+        store.set_embedder(Some(Arc::new(MockEmbedder::new_with_dim(dim))));
+        assert!(store.is_vector_ready());
+        let ddl: String = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(sql, [], |row| row.get(0))
+            .unwrap();
+        assert!(ddl.contains(&format!("embedding float[{dim}]")), "{ddl}");
+
+        store
+            .replace_file(&one_chunk("src/a.rs", Some("alpha"), 1, 1, "h1", "alpha"))
+            .unwrap();
+        let bytes: i64 = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT length(embedding) FROM vec_chunks", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(usize::try_from(bytes).unwrap(), dim * size_of::<f32>());
+        let hits = store.search_vector("alpha", 8).unwrap();
+        assert_eq!(hits[0].symbol.as_deref(), Some("alpha"));
+        assert!((hits[0].score - 1.0).abs() < 1e-5);
+
+        let other = if dim == 512 { 1024 } else { 512 };
+        store.set_embedder(Some(Arc::new(MockEmbedder::new_with_dim(other))));
+        assert_eq!(store.embedder_snapshot().unwrap().dim(), dim);
+        assert_eq!(store.search_vector("alpha", 8).unwrap(), hits);
+    }
+}
+
+#[test]
+fn zero_dimension_keeps_fts_available_and_allows_retry() {
+    let store = Store::new(true).unwrap();
+    store.set_embedder(Some(Arc::new(MockEmbedder::new_with_dim(0))));
+    assert!(!store.is_vector_ready());
+    assert!(store
+        .search_vector("alpha", 8)
+        .unwrap_err()
+        .message
+        .contains("vector search disabled"));
+    let file = one_chunk("src/a.rs", Some("alpha"), 1, 1, "h1", "alpha");
+    store.replace_file(&file).unwrap();
+    assert_eq!(store.search_keyword("alpha", 8).unwrap().len(), 1);
+    store.set_embedder(Some(Arc::new(MockEmbedder::new_with_dim(1024))));
+    store.replace_file(&file).unwrap();
+    assert_eq!(store.search_vector("alpha", 8).unwrap().len(), 1);
 }
 
 /// vector 路入库后命中且 top1 语义最近；score 即 cosine、降序。

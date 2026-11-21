@@ -97,8 +97,7 @@ fn resolve_vector_with(
 /// Store 建库并逐文件 replace_file（单文件失败跳过）→ 汇总。
 pub(crate) fn build_context(root: &Path, enable_vector: bool) -> Result<BuiltContext, ToolError> {
     // 真实向量开关（F2.1 / F2.5）：请求 + 环境变量 + 模型单例三重决定。
-    let (vector, embedder, degraded_reason) = resolve_vector(enable_vector);
-    let vector_degraded = enable_vector && !vector;
+    let (vector_requested, embedder, mut degraded_reason) = resolve_vector(enable_vector);
     let rss_before = vm_rss_kb();
     let outcome = walker::collect_with_counts(root);
     let sources = outcome.files;
@@ -107,12 +106,15 @@ pub(crate) fn build_context(root: &Path, enable_vector: bool) -> Result<BuiltCon
     let loaded: Vec<Result<walker::LoadedFile, walker::LoadSkip>> =
         sources.par_iter().map(walker::load_file).collect();
 
-    let store = Store::new(vector)?;
-    // 注入嵌入器（Store::new 建表后立即注入：逐文件 replace_file
-    // 的向量写入依赖它；None = 纯 FTS5）。
-    if let Some(e) = &embedder {
-        store.set_embedder(Some(Arc::clone(e)));
+    let store = Store::new(vector_requested)?;
+    if let Some(e) = embedder {
+        store.set_embedder(Some(e));
     }
+    let vector = store.is_vector_ready();
+    if vector_requested && !vector {
+        degraded_reason = "vector index initialization failed".into();
+    }
+    let vector_degraded = enable_vector && !vector;
     let mut parsed: HashMap<String, ParsedFile> = HashMap::new();
     let mut files: HashMap<String, FileRecord> = HashMap::new();
     let mut skipped_binary = 0u64;
