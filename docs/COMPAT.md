@@ -46,6 +46,10 @@
 | VmRSS 内存估算 | ✗ /proc 不存在 → mem_est_mb = 0.0 | GetProcessMemoryInfo / GlobalMemoryStatusEx；F1.14 仅记录不设门，0.0 可接受 |
 | malloc arena 上限 | ✗ 无 glibc → 编译剔除 | Windows 默认堆即可；如需硬限用 Job Object 内存配额 |
 
+### Windows 黑盒夹具
+
+原生运行 [44937140071](https://github.com/Thatgfsj/codeidx/actions/runs/44937140071) 中，Node.js v22.23.5 的 `cpSync(..., { recursive: true })` 无过滤器时走 C++ `std::filesystem` 窄字符路径，含中文的目标可能被解析到乱码目录。黑盒现使用 `mkdirSync` / `copyFileSync` 逐文件复制并校验目标内容，再断言 6 个源码文件入库、2 个非源码文件被跳过，以及 FTS 命中 `src/lib.rs` 中的预期符号。Rust 挂载测试通过逐文件 `fs::copy` 准备独立夹具，再将含空格和中文的 canonical 路径交给生产 walker。
+
 ## 5. macOS 未实测项清单
 
 同 unix 信号模型 + PermissionsExt 路径理论上直接可用，以下无实机验证：
