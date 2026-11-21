@@ -153,24 +153,8 @@ pub fn read_symbol(args: &Value) -> Result<ToolPayload, ToolError> {
 
 // ------------------------------------------------------------------ LSP --
 // Phase 3 接线：lsp_* 是 async 语义请求（LSP 子进程往返，冷启动秒级），
-// server.rs 在 tools/call 层按工具名分流到 lsp_dispatch。router 同步表中的
-// lsp 分支仅为兼容保留，运行时不可达（即下面三个同步兜底 stub）。
-
-/// 同步兜底 stub：仅供 router 兼容表引用，运行时不可达（server 层已
-/// async 分流）；文案与 router.rs 的既有 stub 契约测试保持一致。
-pub fn lsp_definition(_args: &Value) -> Result<ToolPayload, ToolError> {
-    Err(ToolError::new("LSP bridge not available yet"))
-}
-
-/// 同步兜底 stub：同 lsp_definition。
-pub fn lsp_references(_args: &Value) -> Result<ToolPayload, ToolError> {
-    Err(ToolError::new("LSP bridge not available yet"))
-}
-
-/// 同步兜底 stub：同 lsp_definition。
-pub fn lsp_hover(_args: &Value) -> Result<ToolPayload, ToolError> {
-    Err(ToolError::new("LSP bridge not available yet"))
-}
+// server.rs 在 tools/call 层按工具名分流到 lsp_dispatch（本模块不提供
+// 同步兜底——router 同步表已移除 lsp 三项）。
 
 /// lsp_* 三工具的 async 分发入口（server 层按名分流到此）。
 pub async fn lsp_dispatch(name: &str, args: &Value) -> Result<ToolPayload, ToolError> {

@@ -9,7 +9,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: rustfmt, clippy, rust-analyzer   # lsp 实机单测需要
       - uses: Swatinem/rust-cache@v2
       - name: fmt
         run: cargo fmt --check
