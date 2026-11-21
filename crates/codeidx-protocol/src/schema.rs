@@ -59,12 +59,12 @@ pub const TOOL_SPECS: [ToolSpec; 11] = [
     },
     ToolSpec {
         name: tool_name::SEARCH_CODE,
-        description: "在项目中检索代码，支持 keyword / vector / hybrid 三种模式。",
-        schema_json: r#"{"type":"object","properties":{"path":{"type":"string","description":"已挂载项目的根目录绝对路径"},"query":{"type":"string","description":"检索词"},"mode":{"type":"string","enum":["hybrid","keyword","vector"],"description":"检索模式","default":"hybrid"},"top_k":{"type":"integer","minimum":1,"maximum":100,"description":"返回命中数上限","default":8}},"required":["path","query"]}"#,
+        description: "在项目中检索代码，支持 keyword / vector / hybrid 三种模式；results 为紧凑行文本：首行 # search hits=<shown> truncated_hits=<k> tokens≈<t>/budget=<b>，次行列名，数据行 file<TAB>symbol<TAB>start<TAB>end<TAB>score<TAB>snippet（score 四位小数）。",
+        schema_json: r#"{"type":"object","properties":{"path":{"type":"string","description":"已挂载项目的根目录绝对路径"},"query":{"type":"string","description":"检索词"},"mode":{"type":"string","enum":["hybrid","keyword","vector"],"description":"检索模式","default":"hybrid"},"top_k":{"type":"integer","minimum":1,"maximum":50,"description":"返回命中数上限","default":8},"token_budget":{"type":"integer","minimum":200,"maximum":8000,"description":"结果 token 预算（超预算数据行截断并计 truncated_hits）","default":1200}},"required":["path","query"]}"#,
     },
     ToolSpec {
         name: tool_name::GET_FILE_OUTLINE,
-        description: "返回单个文件的符号大纲（无函数体）。",
+        description: "返回单个文件的符号大纲（无函数体）；紧凑行文本：首行 # outline file=<rel> symbols=<n>，数据行 kind<TAB>name<TAB>start<TAB>end<TAB>sig。",
         schema_json: r#"{"type":"object","properties":{"path":{"type":"string","description":"已挂载项目的根目录绝对路径"},"file_path":{"type":"string","description":"目标文件相对路径"}},"required":["path","file_path"]}"#,
     },
     ToolSpec {
@@ -148,6 +148,8 @@ mod tests {
         assert!(schemas[tool_name::GET_REPO_MAP].contains("\"focus_files\""));
         assert!(schemas[tool_name::GET_REPO_MAP].contains("\"token_budget\""));
         assert!(schemas[tool_name::SEARCH_CODE].contains("\"top_k\""));
+        assert!(schemas[tool_name::SEARCH_CODE].contains("\"token_budget\""));
+        assert!(schemas[tool_name::SEARCH_CODE].contains("\"maximum\":50"));
         assert!(schemas[tool_name::GET_FILE_OUTLINE].contains("\"file_path\""));
         assert!(schemas[tool_name::READ_SYMBOL].contains("\"symbol_name\""));
         assert!(schemas[tool_name::LSP_DEFINITION].contains("\"file_path\""));

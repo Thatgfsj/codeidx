@@ -44,9 +44,9 @@ async function main() {
       path: work, query: '组合配置生成标记字符串的函数', mode: 'vector', top_k: 8,
     }, { timeoutMs: 120000 });
     expect(!r.isError, 'vector search ok: ' + r.text);
-    const syms = (r.json.results ?? []).map(h => h.symbol);
-    console.log('  [info] vector hits: ' + JSON.stringify(syms));
-    expect(syms.includes('unicorn_marker_fn'), 'unicorn_marker_fn in top-8 vector results');
+    const results = r.json.results;
+    console.log('  [info] vector top rows: ' + results.split('\n').slice(2, 6).join(' | '));
+    expect(results.includes('unicorn_marker_fn'), 'unicorn_marker_fn in top-8 vector results');
   });
 
   await run('F2.3', 'hybrid RRF 融合两路', async () => {
@@ -55,8 +55,7 @@ async function main() {
     }, { timeoutMs: 120000 });
     expect(!r.isError, 'hybrid ok: ' + r.text);
     expectEq(r.json.mode, 'hybrid', 'mode echoed');
-    const files = (r.json.results ?? []).map(h => h.file);
-    expect(files.includes('src/lib.rs'), 'definition chunk fused into results');
+    expect(r.json.results.includes('src/lib.rs'), 'definition chunk fused into results');
   });
 
   await run('F2.6', '内存画像记录', async () => {

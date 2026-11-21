@@ -87,3 +87,12 @@
 - 自举终版产物: mount 含 skipped_unsupported=16（AI 可判读为何非全量）+vector_degraded=false；list 同步降级态；unmount killed_lsps=1；挂载 41.7s / RSS 823MB（ONNX 修复实效）
 - 审查过程: b 会话中断一次（Lead 唤醒恢复）；clippy 全 workspace 曾挂 store dead_code（b 快照旧态，主区已修）+project 两 lint（Lead 收尾）；集成为 Lead 直接执行（按用户规范简单收尾 Lead 完成）
 - 结论: **PASS**
+
+## 2026-11-22 产物紧凑化三条（第一性原则 token 优化，用户拍板三条全做） — teammate-b
+
+- 交付物: outline/search 紧凑行格式（元信息行+列名行+数据行，tab 分列，sig/snippet 转义防御）；score {:.4} 四位小数；search_code 新增 token_budget（默认 1200，硬 clamp 200..8000，双闸 top_k×token）；schema/ARCHITECTURE/SOP/README 同步；bb 脚本断言适配（授权范围）
+- 实测收益: 16 符号大纲 2374→1546 chars（省 35%，键名重复税消除）；score 每条省 ~11 chars；truncated_hits=16 演示预算截断真实标记（AI 可感知丢失量并调大重取）
+- 通用门: fmt=PASS clippy=PASS(全 workspace 0 警告) test=143 passed/0 failed/1 ignored（+3 新增；5 处 DTO 适配）
+- 黑盒: 三套全绿 bb_phase1 17/17 + bb_phase2 6/6 + bb_phase3 8/8（work-i 复验 + 主区集成后复验双重）
+- 偏离裁定: 6 项全接受（handlers 980 行贴线申报——测试拆分列入后续；FileOutline DTO 暂留；tokens 口径仅数据行与 repo_map 对齐）
+- 结论: **PASS**（另：GitHub 仓库已改名 Thatgfsj/codeidx-mcp → Thatgfsj/codeidx，文档无硬编码 URL 无需文本同步；crate 名保留——codeidx-mcp 是 workspace 内 MCP 接入层的准确命名，与 codeidx-tui 对应）

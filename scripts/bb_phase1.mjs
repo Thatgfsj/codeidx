@@ -82,22 +82,26 @@ async function main() {
   await runCase('F1.6', 'get_file_outline 符号与行号', async () => {
     const r = await c.tool('get_file_outline', { path: work, file_path: 'src/lib.rs' });
     expect(!r.isError, 'outline ok: ' + r.text);
-    const sym = (r.json.symbols ?? []).find(s => s.name === 'unicorn_marker_fn');
-    expect(!!sym, 'unicorn_marker_fn in outline');
-    expectEq(sym.kind.toLowerCase(), 'fn', 'kind fn');
-    expect(sym.start_line >= 1 && sym.end_line >= sym.start_line, 'line numbers sane');
-    const cfg = (r.json.symbols ?? []).find(s => s.name === 'GoldConfig');
-    expect(!!cfg, 'GoldConfig struct in outline');
+    // 紧凑行文本：首行元信息 + tab 分列数据行。
+    expect(r.text.startsWith('# outline file=src/lib.rs symbols='), 'header: ' + r.text.split('\n')[0]);
+    expect(r.text.includes('fn	unicorn_marker_fn	'), 'unicorn_marker_fn row: ' + r.text);
+    expect(r.text.includes('struct	GoldConfig	'), 'GoldConfig row: ' + r.text);
+    const declared = Number(r.text.split('\n')[0].split('=')[2]);
+    const rows = r.text.split('\n').filter(l => l && !l.startsWith('#')).length;
+    expectEq(rows, declared, 'rows match header symbols count');
   });
 
   await runCase('F1.7', 'search_code keyword 唯一函数命中', async () => {
     const r = await c.tool('search_code', { path: work, query: 'unicorn_marker_fn', mode: 'keyword', top_k: 8 });
     expect(!r.isError, 'search ok: ' + r.text);
-    expect((r.json.results ?? []).length >= 1, 'at least one hit');
-    const top = r.json.results[0];
-    expect(top.file === 'src/lib.rs', 'hit in src/lib.rs, got ' + top.file);
-    expect(top.symbol === 'unicorn_marker_fn' || top.symbol === null, 'symbol field sane');
-    expect(top.start_line >= 1, 'start_line valid');
+    const results = r.json.results;
+    expect(typeof results === 'string' && results.length > 0, 'results compact text: ' + r.text);
+    const dataRows = results.split('\n').filter(l => l && !l.startsWith('#') && !l.startsWith('file	'));
+    expect(dataRows.length >= 1, 'at least one hit row');
+    const top = dataRows[0];
+    expect(top.startsWith('src/lib.rs	'), 'hit in src/lib.rs, got ' + top);
+    expect(top.includes('	unicorn_marker_fn	') || top.includes('	-	'), 'symbol field sane: ' + top);
+    expect(/^src\/lib\.rs	[^	]*	[1-9][0-9]*/.test(top), 'start_line valid: ' + top);
   });
 
   await runCase('F1.8', 'read_symbol 完整实现体', async () => {
@@ -130,9 +134,9 @@ async function main() {
     expectEq(r.json.modified, 1, 'modified=1');
     expectEq(r.json.removed, 1, 'removed=1');
     const s = await c.tool('search_code', { path: work, query: 'brand_new_fn', mode: 'keyword' });
-    expect(!s.isError && (s.json.results ?? []).some(h => h.file === 'src/extra.rs'), 'new file indexed after sync');
+    expect(!s.isError && s.json.results.includes('src/extra.rs'), 'new file indexed after sync');
     const s2 = await c.tool('search_code', { path: work, query: 'edited_fn_added_later', mode: 'keyword' });
-    expect(!s2.isError && (s2.json.results ?? []).length >= 1, 'modified content indexed after sync');
+    expect(!s2.isError && s2.json.results.includes('edited_fn_added_later'), 'modified content indexed after sync');
   });
 
   await runCase('F1.10', 'unmount_project', async () => {

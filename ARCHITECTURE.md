@@ -64,8 +64,8 @@ ast, protocol  // 叶子 crate，无内部依赖
 | list_mounted_projects | — | `{projects:[{path,files,symbols,lsps:[..],vector}]}` |
 | sync_project | path: string | `{added,modified,removed,files,elapsed_ms}` |
 | get_repo_map | path, focus_files?: string[], token_budget?: number=3000 | 纯文本骨架：每行 `<rel_path>:<line> <kind> <name>`，PageRank 权重降序，超预算截断并附尾行 `(truncated, budget=<n>)` |
-| search_code | path, query: string, mode?: "hybrid"|"keyword"|"vector"=hybrid, top_k?: number=8 | `{results:[{file,symbol,start_line,end_line,score,snippet}],mode,elapsed_ms}`，snippet ≤ 3 行 |
-| get_file_outline | path, file_path: string | `{file,symbols:[{kind,name,start_line,end_line,sig}]}`，无函数体 |
+| search_code | path, query: string, mode?: "hybrid"|"keyword"|"vector"=hybrid, top_k?: number=8(≤50), token_budget?: number=1200(200..8000) | JSON 壳 `{results:"紧凑行文本",mode,elapsed_ms,degraded,degraded_reason,total_candidates}`：行文本首行 `# search hits=<shown> truncated_hits=<k> tokens≈<t>/budget=<b>`、次行列名，数据行 `file<TAB>symbol<TAB>start<TAB>end<TAB>score<TAB>snippet`（score 四位小数；snippet ≤ 3 行、内换行转义 \n、symbol 缺省 -） |
+| get_file_outline | path, file_path: string | 紧凑行文本：首行 `# outline file=<rel> symbols=<n>`，数据行 `kind<TAB>name<TAB>start<TAB>end<TAB>sig`（无函数体；空符号文件 symbols=0 真实标记空） |
 | read_symbol | path, file_path, symbol_name | `{file,name,start_line,end_line,code}`，完整实现体 |
 | lsp_definition | path, file_path, line, character | `{locations:[{file,line,character}]}` |
 | lsp_references | path, file_path, line, character | `{locations:[{file,line,character}]}` |
