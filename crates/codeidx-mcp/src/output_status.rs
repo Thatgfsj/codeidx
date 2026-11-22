@@ -33,23 +33,24 @@ pub(crate) fn mount(report: &MountReport) -> String {
         "# mount_project mounted={} path={path} files={} symbols={} elapsed_ms={} mem_est_mb={} \
          vector={} skipped_binary={} skipped_oversize={} skipped_unsupported={} \
          vector_degraded={} vector_degraded_reason={reason}\n",
-        report.mounted,
+        u8::from(report.mounted),
         report.files,
         report.symbols,
         report.elapsed_ms,
         report.mem_est_mb,
-        report.vector,
+        u8::from(report.vector),
         report.skipped_binary,
         report.skipped_oversize,
         report.skipped_unsupported,
-        report.vector_degraded,
+        u8::from(report.vector_degraded),
     )
 }
 
 pub(crate) fn unmount(report: &UnmountReport) -> String {
     format!(
         "# unmount_project unmounted={} killed_lsps={}\n",
-        report.unmounted, report.killed_lsps,
+        u8::from(report.unmounted),
+        report.killed_lsps,
     )
 }
 
@@ -58,7 +59,6 @@ pub(crate) fn projects(report: &ProjectsReport) -> String {
         "# list_mounted_projects projects={}\n",
         report.projects.len()
     );
-    out.push_str("path\tfiles\tsymbols\tvector\tvector_degraded\tvector_degraded_reason\tlsps\n");
     for project in &report.projects {
         let lsps = serde_json::to_string(&project.lsps).expect("LSP names serialize");
         writeln!(
@@ -67,8 +67,8 @@ pub(crate) fn projects(report: &ProjectsReport) -> String {
             tsv_cell(&project.path),
             project.files,
             project.symbols,
-            project.vector,
-            project.vector_degraded,
+            u8::from(project.vector),
+            u8::from(project.vector_degraded),
             tsv_cell(&project.vector_degraded_reason),
         )
         .expect("writing to String is infallible");
@@ -87,10 +87,9 @@ pub(crate) fn sync(report: &SyncReport) -> String {
         report.elapsed_ms,
         report.failed,
         report.failed_files.len(),
-        report.failed_files_truncated,
+        u8::from(report.failed_files_truncated),
     );
     if !report.failed_files.is_empty() {
-        out.push_str("file\n");
         for file in &report.failed_files {
             writeln!(out, "{}", tsv_cell(file)).expect("writing to String is infallible");
         }
@@ -101,11 +100,10 @@ pub(crate) fn sync(report: &SyncReport) -> String {
 /// The bridge exposes start points (1-based lines, 0-based UTF-16 columns).
 pub(crate) fn locations(tool_name: &str, locations: &[Location]) -> String {
     let mut out = format!("# {tool_name} locations={}\n", locations.len());
-    out.push_str("file\tline\tcharacter\n");
     for location in locations {
         writeln!(
             out,
-            "{}\t{}\t{}",
+            "{}:{}:{}",
             tsv_cell(&location.file),
             location.line,
             location.character,
@@ -133,11 +131,10 @@ mod tests {
         };
         let result = sync(&report);
         let lines: Vec<_> = result.lines().collect();
-        assert!(lines[0].ends_with("failed=21 failed_files=20 failed_files_truncated=true"));
-        assert_eq!(lines[1], "file");
-        assert_eq!(lines.len(), 22);
-        assert_eq!(lines[2], r"dir\\src\t0\r\n.rs");
-        assert_eq!(lines[21], r"dir\\src\t19\r\n.rs");
+        assert!(lines[0].ends_with("failed=21 failed_files=20 failed_files_truncated=1"));
+        assert_eq!(lines.len(), 21);
+        assert_eq!(lines[1], r"dir\\src\t0\r\n.rs");
+        assert_eq!(lines[20], r"dir\\src\t19\r\n.rs");
     }
 
     #[test]
@@ -158,9 +155,9 @@ mod tests {
         };
         assert_eq!(
             mount(&report),
-            "# mount_project mounted=true path=\"/test repo\" files=3 symbols=4 elapsed_ms=5 \
-             mem_est_mb=0.25 vector=false skipped_binary=6 skipped_oversize=7 skipped_unsupported=8 \
-             vector_degraded=true vector_degraded_reason=\"model init failed:\\nno model\"\n",
+            "# mount_project mounted=1 path=\"/test repo\" files=3 symbols=4 elapsed_ms=5 \
+             mem_est_mb=0.25 vector=0 skipped_binary=6 skipped_oversize=7 skipped_unsupported=8 \
+             vector_degraded=1 vector_degraded_reason=\"model init failed:\\nno model\"\n",
         );
     }
 
@@ -173,11 +170,11 @@ mod tests {
         };
         assert_eq!(
             locations("lsp_definition", &[location]),
-            "# lsp_definition locations=1\nfile\tline\tcharacter\nsrc/a\\tb.rs\t7\t0\n",
+            "# lsp_definition locations=1\nsrc/a\\tb.rs:7:0\n",
         );
         assert_eq!(
             locations("lsp_references", &[]),
-            "# lsp_references locations=0\nfile\tline\tcharacter\n",
+            "# lsp_references locations=0\n",
         );
     }
 }

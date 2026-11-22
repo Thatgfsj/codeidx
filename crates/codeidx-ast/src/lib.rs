@@ -17,6 +17,7 @@ mod pagerank;
 mod repomap;
 
 pub use lang::detect_lang;
+pub use pagerank::{pagerank, RepoNode};
 pub use repomap::repo_map;
 pub use types::{Chunk, Lang, ParsedFile, SymbolDef, SymbolKind, SymbolRef};
 

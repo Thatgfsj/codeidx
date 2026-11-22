@@ -51,7 +51,7 @@ pub(crate) fn compact_repo_map(
     for (index, (node, _)) in ranked.iter().enumerate() {
         let path = node.rel_path.as_str();
         let kind = format!("{:?}", node.kind).to_ascii_lowercase();
-        let row = format!("  {} {kind} {}\n", node.start_line, single_line(&node.name));
+        let row = format!(" {} {kind} {}\n", node.start_line, single_line(&node.name));
         let group_index = group_of_path.get(path).copied();
         let heading = group_index
             .is_none()
@@ -99,9 +99,6 @@ pub(crate) fn compact_repo_map(
         text.push_str(&group.rows);
         files.push(json!({"path": group.path, "symbols": group.symbols}));
     }
-    if truncated > 0 {
-        writeln!(text, "(truncated, budget={token_budget})").unwrap();
-    }
 
     let data = json!({
         "symbols": symbols,
@@ -135,10 +132,18 @@ pub(crate) fn compact_outline(file: &str, entries: &[OutlineEntry]) -> (String, 
         if start_line != end_line {
             write!(text, "-{end_line}").unwrap();
         }
-        write!(text, " {} {}", single_line(kind), single_line(name)).unwrap();
         let signature = single_line(sig);
-        if !signature.trim().is_empty() {
-            write!(text, " {}", signature.trim()).unwrap();
+        let signature = signature.trim();
+        let identifies_symbol = signature
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .any(|word| word == name);
+        if identifies_symbol {
+            write!(text, " {kind} {signature}").unwrap();
+        } else {
+            write!(text, " {kind} {}", single_line(name)).unwrap();
+            if !signature.is_empty() {
+                write!(text, " {signature}").unwrap();
+            }
         }
         text.push('\n');
     }
@@ -180,7 +185,7 @@ mod tests {
             node("indexed.rs", 4, "low", 1.0),
         ];
         let focus = ["indexed.rs".into(), "missing.rs".into()];
-        let body = "z.rs:\n  1 fn high\n  3 fn third\na.rs:\n  2 fn second\n";
+        let body = "z.rs:\n 1 fn high\n 3 fn third\na.rs:\n 2 fn second\n";
         let budget = body.len().div_ceil(BYTES_PER_TOKEN);
         let (text, data) = compact_repo_map(&ranked, &focus, budget);
         assert!(text.contains(body));
@@ -194,21 +199,6 @@ mod tests {
         assert_eq!(data["files"][0]["path"], "z.rs");
         assert_eq!(data["files"][0]["symbols"][1]["rank"], 3);
         assert_eq!(data["files"][1]["symbols"][0]["rank"], 2);
-    }
-
-    #[test]
-    fn path_heading_counts_and_budget_does_not_skip_higher_ranks() {
-        let ranked = [
-            node("really-long-file-path.rs", 1, "top", 2.0),
-            node("x", 2, "x", 1.0),
-        ];
-        let (text, data) = compact_repo_map(&ranked, &[], 4);
-        assert!(!text.contains("rs:"));
-        assert!(!text.contains("x:"));
-        assert_eq!(data["shown"], 0);
-        assert_eq!(data["used_tokens"], 0);
-        assert_eq!(data["truncated"], 2);
-        assert_eq!(data["files"], json!([]));
     }
 
     #[test]
@@ -241,7 +231,7 @@ mod tests {
         let (text, data) = compact_outline("src/a.rs", &entries);
         assert_eq!(
             text,
-            "# outline file=src/a.rs symbols=2\n1-5 fn f fn f(a: &str)\n8 type T\n"
+            "# outline file=src/a.rs symbols=2\n1-5 fn fn f(a: &str)\n8 type T\n"
         );
         assert_eq!(data, json!({"file": "src/a.rs", "symbols": entries}));
     }

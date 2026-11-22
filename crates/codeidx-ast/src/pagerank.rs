@@ -10,7 +10,7 @@ use crate::types::{SymbolDef, SymbolRef};
 
 /// 一个骨架图节点：`(name, rel_path)` 唯一的符号与其代表定义。
 #[derive(Debug, Clone)]
-pub(crate) struct RepoNode {
+pub struct RepoNode {
     pub name: String,
     pub rel_path: String,
     pub kind: crate::types::SymbolKind,
@@ -24,7 +24,7 @@ const MAX_ITERATIONS: usize = 20;
 const FOCUS_BOOST: f64 = 2.0;
 
 /// 构建 PageRank 节点与分数，按分数降序返回（同分按路径稳定排序）。
-pub(crate) fn pagerank(
+pub fn pagerank(
     symbols: &[SymbolDef],
     refs: &[SymbolRef],
     focus_files: &[String],

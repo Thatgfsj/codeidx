@@ -19,8 +19,8 @@ try {
   for (const entry of cases) {
     const [file_path, symbol, line] = entry.split(':');
     const outline = await c.tool('get_file_outline', { path, file_path });
-    expect(outline.text.includes('	' + symbol + '	' + line + '	'), 'outline: ' + outline.text);
-    expect(map.text.split(String.fromCharCode(10)).some(row => row.startsWith(file_path + ':' + line + ' ') && row.endsWith(' ' + symbol)), 'RepoMap: ' + entry);
+    expect(outline.json?.symbols.some(s => s.name === symbol && s.start_line === Number(line)), 'outline: ' + outline.text);
+    expect(map.json?.files.some(f => f.path === file_path && f.symbols.some(s => s.name === symbol && s.start_line === Number(line))), 'RepoMap: ' + entry);
     const search = await c.tool('search_code', { path, mode: 'keyword', top_k: 10, query: symbol });
     expect(search.json?.results?.includes(file_path + '	' + symbol + '	' + line + '	'), 'search: ' + search.text);
   }

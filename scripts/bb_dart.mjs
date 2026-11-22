@@ -14,9 +14,9 @@ try {
   const m = await c.tool('mount_project', { path });
   expectEq(m.json?.files, 2, 'mount both Dart files');
   const map = await c.tool('get_repo_map', { path });
-  expect(map.text.includes('dart_unique_marker_fn'), 'marker in RepoMap');
+  expect(map.json?.files.some(f => f.symbols.some(s => s.name === 'dart_unique_marker_fn')), 'marker in RepoMap');
   const outline = await c.tool('get_file_outline', { path, file_path: 'lib.dart' });
-  expect(outline.text.includes('dart_unique_marker_fn	32	'), 'marker definition on line 32');
+  expect(outline.json?.symbols.some(s => s.name === 'dart_unique_marker_fn' && s.start_line === 32), 'marker definition on line 32');
   const search = await c.tool('search_code', { path, mode: 'keyword', top_k: 1, query: 'dart_unique_marker_fn' });
   expect(search.json?.results?.includes('lib.dart	dart_unique_marker_fn	32	'), 'first keyword hit is definition');
   const u = await c.tool('unmount_project', { path });

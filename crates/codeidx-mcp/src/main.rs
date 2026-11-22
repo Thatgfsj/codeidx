@@ -7,6 +7,10 @@
 //! 一切日志 / tracing 一律走 stderr。
 
 mod handlers;
+mod output;
+mod output_navigation;
+mod output_search;
+mod output_status;
 mod router;
 mod server;
 

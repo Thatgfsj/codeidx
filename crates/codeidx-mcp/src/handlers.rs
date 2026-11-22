@@ -11,15 +11,16 @@ use std::time::Instant;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use codeidx_ast::{detect_lang, repo_map, Lang};
+use codeidx_ast::{detect_lang, pagerank, Lang};
 use codeidx_protocol::tools::{
-    HoverReport, Location, LocationsReport, LspPositionParams, MountParams, OutlineEntry,
-    OutlineParams, PathParams, ProjectsReport, ReadSymbolParams, RepoMapParams, SearchHit,
-    SearchMode, SearchParams, SearchResult,
+    HoverReport, Location, LocationsReport, LspPositionParams, MountParams, OutlineParams,
+    PathParams, ProjectsReport, ReadSymbolParams, RepoMapParams, SearchHit, SearchMode,
+    SearchParams, SearchResult,
 };
 use codeidx_protocol::{ToolError, ToolPayload};
 
-use crate::MANAGER;
+use crate::output::OutputFormat;
+use crate::{output_navigation, output_search, output_status, MANAGER};
 
 /// 参数反序列化：失败统一转执行错误（isError）。
 fn parse_args<T: DeserializeOwned>(args: &Value) -> Result<T, ToolError> {
@@ -27,13 +28,9 @@ fn parse_args<T: DeserializeOwned>(args: &Value) -> Result<T, ToolError> {
         .map_err(|e| ToolError::new(format!("invalid arguments: {e}")))
 }
 
-/// DTO → 紧凑 JSON 载荷。
-fn report_to_value<T: serde::Serialize>(report: &T) -> ToolPayload {
-    ToolPayload::Json(serde_json::to_value(report).expect("report DTO serializes"))
-}
-
 /// mount_project：真挂载（walker 遍历 + rayon 并行解析 + 全量入库）。
 pub fn mount_project(args: &Value) -> Result<ToolPayload, ToolError> {
+    let format = OutputFormat::parse(args)?;
     let params: MountParams = parse_args(args)?;
     let enable_vector = params.enable_vector.unwrap_or(false);
     let report = MANAGER.mount_with_auto_sync(
@@ -41,39 +38,43 @@ pub fn mount_project(args: &Value) -> Result<ToolPayload, ToolError> {
         enable_vector,
         params.auto_sync.unwrap_or(true),
     )?;
-    Ok(report_to_value(&report))
+    Ok(format.render(&report, || output_status::mount(&report)))
 }
 
 /// unmount_project：摘除上下文（store 随之 drop，内存即释放），
 /// 并 SIGKILL 该 root 关联的全部 LSP 子进程（F3.4，报告真值）。
 pub fn unmount_project(args: &Value) -> Result<ToolPayload, ToolError> {
+    let format = OutputFormat::parse(args)?;
     let params: PathParams = parse_args(args)?;
     let root = Path::new(&params.path);
     let mut report = MANAGER.unmount(root)?;
     report.killed_lsps = crate::LSP.kill_for_root(root) as u32;
-    Ok(report_to_value(&report))
+    Ok(format.render(&report, || output_status::unmount(&report)))
 }
 
 /// list_mounted_projects：manager.list 汇总 + LSP 桥的活动服务器名
-/// （无参数，忽略 arguments）。
-pub fn list_mounted_projects(_args: &Value) -> Result<ToolPayload, ToolError> {
+pub fn list_mounted_projects(args: &Value) -> Result<ToolPayload, ToolError> {
+    let format = OutputFormat::parse(args)?;
     let mut projects = MANAGER.list();
     for info in &mut projects {
         info.lsps = crate::LSP.active_lsps(Path::new(&info.path));
     }
-    Ok(report_to_value(&ProjectsReport { projects }))
+    let report = ProjectsReport { projects };
+    Ok(format.render(&report, || output_status::projects(&report)))
 }
 
 /// sync_project：mtime/size 快筛 + blake3 复核的增量重建。
 pub fn sync_project(args: &Value) -> Result<ToolPayload, ToolError> {
+    let format = OutputFormat::parse(args)?;
     let params: PathParams = parse_args(args)?;
     let report = MANAGER.sync(Path::new(&params.path))?;
-    Ok(report_to_value(&report))
+    Ok(format.render(&report, || output_status::sync(&report)))
 }
 
 /// get_repo_map：parsed 全集 symbols+refs → ast::repo_map 纯文本骨架。
 /// focus_files / token_budget 缺省：空聚焦、预算 3000。
 pub fn get_repo_map(args: &Value) -> Result<ToolPayload, ToolError> {
+    let format = OutputFormat::parse(args)?;
     let params: RepoMapParams = parse_args(args)?;
     MANAGER.with_project(Path::new(&params.path), |ctx| {
         let mut symbols = Vec::new();
@@ -84,7 +85,9 @@ pub fn get_repo_map(args: &Value) -> Result<ToolPayload, ToolError> {
         }
         let focus = params.focus_files.clone().unwrap_or_default();
         let budget = params.token_budget.unwrap_or(3000) as usize;
-        Ok(ToolPayload::Text(repo_map(&symbols, &refs, &focus, budget)))
+        let ranked = pagerank(&symbols, &refs, &focus);
+        let (text, json) = output_navigation::compact_repo_map(&ranked, &focus, budget);
+        Ok(format.render(&json, || text))
     })
 }
 
@@ -101,22 +104,6 @@ fn clamp_top_k(raw: Option<u32>) -> usize {
 /// token_budget 硬 clamp（紧凑化第三闸）：缺省 1200、区间 200..8000。
 fn clamp_token_budget(raw: Option<u32>) -> usize {
     raw.unwrap_or(1200).clamp(200, 8000) as usize
-}
-
-/// outline 紧凑行文本（产物紧凑化）：
-/// 首行 `# outline file=<rel_path> symbols=<n>`，数据行
-/// `kind<TAB>name<TAB>start<TAB>end<TAB>sig`；sig 为最后一列，内含
-/// tab 时替换为空格防错位；空符号文件头行 symbols=0 后无数据行。
-fn outline_to_text(file: &str, entries: &[OutlineEntry]) -> String {
-    let mut out = format!("# outline file={file} symbols={}\n", entries.len());
-    for e in entries {
-        let sig = e.sig.replace('\t', " ");
-        out.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{}\n",
-            e.kind, e.name, e.start_line, e.end_line, sig
-        ));
-    }
-    out
 }
 
 /// search 命中行文本（产物紧凑化）：首行元信息
@@ -174,6 +161,7 @@ fn degrade_reason_of(ctx: &codeidx_project::ProjectContext) -> String {
 }
 
 pub fn search_code(args: &Value) -> Result<ToolPayload, ToolError> {
+    let format = OutputFormat::parse(args)?;
     let params: SearchParams = parse_args(args)?;
     let mode = params.mode.unwrap_or(SearchMode::Hybrid);
     let top_k = clamp_top_k(params.top_k);
@@ -203,21 +191,36 @@ pub fn search_code(args: &Value) -> Result<ToolPayload, ToolError> {
         // 候选块总数：parsed 缓存与 store 同步维护（mount/sync 一致性契约）。
         let total_candidates: u64 = ctx.parsed.values().map(|pf| pf.chunks.len() as u64).sum();
         // 紧凑行文本（产物紧凑化）：top_k 条数闸之后再过 token_budget 总量闸。
-        let results_text = hits_to_lines(&results, token_budget);
-        Ok(report_to_value(&SearchResult {
-            results: results_text,
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        if format != OutputFormat::Json {
+            return Ok(format.text(output_search::render_search(
+                &results,
+                token_budget,
+                output_search::SearchMeta {
+                    mode: effective,
+                    elapsed_ms,
+                    degraded,
+                    degraded_reason: &degraded_reason,
+                    total_candidates,
+                },
+            )));
+        }
+        let report = SearchResult {
+            results: hits_to_lines(&results, token_budget),
             mode: effective,
-            elapsed_ms: started.elapsed().as_millis() as u64,
+            elapsed_ms,
             degraded,
             degraded_reason,
             total_candidates,
-        }))
+        };
+        Ok(format.render(&report, String::new))
     })
 }
 
 /// get_file_outline：store.file_outline → 紧凑行文本（产物紧凑化）；
 /// 文件未索引报执行错误（文案不变）。
 pub fn get_file_outline(args: &Value) -> Result<ToolPayload, ToolError> {
+    let format = OutputFormat::parse(args)?;
     let params: OutlineParams = parse_args(args)?;
     MANAGER.with_project(Path::new(&params.path), |ctx| {
         if !ctx.files.contains_key(&params.file_path) {
@@ -227,22 +230,29 @@ pub fn get_file_outline(args: &Value) -> Result<ToolPayload, ToolError> {
             )));
         }
         let symbols = ctx.store.file_outline(&params.file_path)?;
-        Ok(ToolPayload::Text(outline_to_text(
-            &params.file_path,
-            &symbols,
-        )))
+        let (text, json) = output_navigation::compact_outline(&params.file_path, &symbols);
+        Ok(format.render(&json, || text))
     })
 }
 
 /// read_symbol：store.read_symbol 完整实现体；未命中报执行错误。
 pub fn read_symbol(args: &Value) -> Result<ToolPayload, ToolError> {
+    let format = OutputFormat::parse(args)?;
     let params: ReadSymbolParams = parse_args(args)?;
     MANAGER.with_project(Path::new(&params.path), |ctx| {
         match ctx
             .store
             .read_symbol(&params.file_path, &params.symbol_name)?
         {
-            Some(code) => Ok(report_to_value(&code)),
+            Some(code) => Ok(format.render(&code, || {
+                format!(
+                    "{}:{}-{}\n{}",
+                    code.file.escape_debug(),
+                    code.start_line,
+                    code.end_line,
+                    code.code
+                )
+            })),
             None => Err(ToolError::new(format!(
                 "symbol not found: {}",
                 params.symbol_name
@@ -289,6 +299,7 @@ async fn lsp_prepare(params: &LspPositionParams) -> Result<(PathBuf, Lang, Strin
 
 /// lsp_definition：Location 列表（1-based line、0-based character）。
 async fn lsp_definition_async(args: &Value) -> Result<ToolPayload, ToolError> {
+    let format = OutputFormat::parse(args)?;
     let params: LspPositionParams = parse_args(args)?;
     let (root, lang, text) = lsp_prepare(&params).await?;
     let locations = crate::LSP
@@ -302,13 +313,18 @@ async fn lsp_definition_async(args: &Value) -> Result<ToolPayload, ToolError> {
         )
         .await
         .map_err(|e| ToolError::new(e.to_string()))?;
-    Ok(report_to_value(&LocationsReport {
+    if format != OutputFormat::Json {
+        return Ok(format.text(output_status::locations("lsp_definition", &locations)));
+    }
+    let report = LocationsReport {
         locations: to_protocol_locations(locations),
-    }))
+    };
+    Ok(format.render(&report, String::new))
 }
 
 /// lsp_references：引用集（includeDeclaration=false）。
 async fn lsp_references_async(args: &Value) -> Result<ToolPayload, ToolError> {
+    let format = OutputFormat::parse(args)?;
     let params: LspPositionParams = parse_args(args)?;
     let (root, lang, text) = lsp_prepare(&params).await?;
     let locations = crate::LSP
@@ -322,13 +338,18 @@ async fn lsp_references_async(args: &Value) -> Result<ToolPayload, ToolError> {
         )
         .await
         .map_err(|e| ToolError::new(e.to_string()))?;
-    Ok(report_to_value(&LocationsReport {
+    if format != OutputFormat::Json {
+        return Ok(format.text(output_status::locations("lsp_references", &locations)));
+    }
+    let report = LocationsReport {
         locations: to_protocol_locations(locations),
-    }))
+    };
+    Ok(format.render(&report, String::new))
 }
 
 /// lsp_hover：纯文本 contents；无信息时按契约返回空串。
 async fn lsp_hover_async(args: &Value) -> Result<ToolPayload, ToolError> {
+    let format = OutputFormat::parse(args)?;
     let params: LspPositionParams = parse_args(args)?;
     let (root, lang, text) = lsp_prepare(&params).await?;
     let contents = crate::LSP
@@ -342,9 +363,15 @@ async fn lsp_hover_async(args: &Value) -> Result<ToolPayload, ToolError> {
         )
         .await
         .map_err(|e| ToolError::new(e.to_string()))?;
-    Ok(report_to_value(&HoverReport {
-        contents: Value::String(contents),
-    }))
+    if format != OutputFormat::Json {
+        return Ok(format.text(contents));
+    }
+    Ok(format.render(
+        &HoverReport {
+            contents: Value::String(contents),
+        },
+        String::new,
+    ))
 }
 
 /// 桥 Location → 协议 DTO（行号约定一致：1-based line、0-based character、

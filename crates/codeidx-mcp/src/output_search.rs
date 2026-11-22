@@ -35,13 +35,13 @@ pub(crate) fn render_search(
         let group_index = group_indices.get(file).copied();
         let header = group_index
             .is_none()
-            .then(|| format!("# file={}\n", json_text(file)));
+            .then(|| format!("@{}\n", json_text(file)));
         let symbol = hit
             .symbol
             .as_deref()
             .map_or_else(|| "null".to_owned(), json_text);
         let row = format!(
-            "{rank}\t{}-{}\t{:.4}\t{symbol}\t{}\n",
+            "{rank}\t{}-{}\t{:.2}\t{symbol}\t{}\n",
             hit.start_line,
             hit.end_line,
             hit.score,
@@ -74,7 +74,7 @@ pub(crate) fn render_search(
         hits.len() - shown,
         body_bytes.div_ceil(4),
         meta.elapsed_ms,
-        meta.degraded,
+        u8::from(meta.degraded),
         meta.total_candidates,
         json_text(meta.degraded_reason)
     );
@@ -124,11 +124,11 @@ mod tests {
         assert_eq!(
             body,
             concat!(
-                "# file=\"z.py\"\n",
-                "1\t11-13\t0.1250\tnull\t\"one\"\n",
-                "3\t11-13\t0.1250\tnull\t\"three\"\n",
-                "# file=\"a.rs\"\n",
-                "2\t11-13\t0.1250\t\"two\"\t\"two\"\n"
+                "@\"z.py\"\n",
+                "1\t11-13\t0.12\tnull\t\"one\"\n",
+                "3\t11-13\t0.12\tnull\t\"three\"\n",
+                "@\"a.rs\"\n",
+                "2\t11-13\t0.12\t\"two\"\t\"two\"\n"
             )
         );
     }
@@ -142,7 +142,7 @@ mod tests {
         entry.symbol = Some(symbol.into());
         let out = render_search(&[entry], 200, meta());
         let mut lines = out.lines().skip(1);
-        let path_field = lines.next().unwrap().strip_prefix("# file=").unwrap();
+        let path_field = lines.next().unwrap().strip_prefix("@").unwrap();
         let columns: Vec<_> = lines.next().unwrap().split('\t').collect();
         assert_eq!(columns.len(), 5);
         for (field, expected) in [
@@ -193,7 +193,7 @@ mod tests {
         let empty = render_search(&[], 200, degraded());
         assert_eq!(
             over_budget,
-            "# search hits=0 truncated_hits=1 tokens≈0/budget=200 mode=keyword elapsed_ms=3 degraded=true total_candidates=17 degraded_reason=\"model init failed:\\n\\\"test\\\"\"\n"
+            "# search hits=0 truncated_hits=1 tokens≈0/budget=200 mode=keyword elapsed_ms=3 degraded=1 total_candidates=17 degraded_reason=\"model init failed:\\n\\\"test\\\"\"\n"
         );
         assert_eq!(
             empty,
