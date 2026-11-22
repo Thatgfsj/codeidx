@@ -60,7 +60,7 @@ ast, protocol  // 叶子 crate，无内部依赖
 
 行号约定：对外一律 1-based line、0-based character（UTF-16 code unit，LSP 对齐）。
 
-所有工具支持可选 `format=compact|json|md`，默认 `compact`。JSON-RPC 信封独立于结果正文格式。
+所有工具的 `format` 参数均可省略，默认仅返回 `compact` 正文。用户明确要求 JSON 或 Markdown 展示时，客户端分别显式传 `format: "json"` 或 `format: "md"`。每次调用只返回一种正文格式，外层仍使用 JSON-RPC。
 
 | 工具 | 默认结果正文 |
 |---|---|

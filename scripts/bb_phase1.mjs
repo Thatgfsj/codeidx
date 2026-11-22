@@ -46,7 +46,12 @@ async function main() {
   await runCase('F1.2', '挂载前 tools/list 已列出全部 11 个工具', async () => {
     const res = await c.call('tools/list');
     const names = res.result.tools.map(t => t.name).sort();
-    expect(res.result.tools.every(t => t.inputSchema.properties.format.default === 'compact'), 'compact is default');
+    for (const { name, inputSchema } of res.result.tools) {
+      const format = inputSchema.properties.format;
+      expectEq(format.default, 'compact', `${name} defaults to compact`);
+      expect(!inputSchema.required.includes('format'), `${name} format may be omitted`);
+      expect(format.description?.includes('用户明确要求'), `${name} documents explicit format selection`);
+    }
     expectEq(names.length, 11, 'tool count');
     for (const want of ['mount_project', 'unmount_project', 'list_mounted_projects', 'sync_project',
       'get_repo_map', 'search_code', 'get_file_outline', 'read_symbol',
@@ -62,8 +67,17 @@ async function main() {
     expect(r.json.files > 5, 'files > 5, got ' + r.json.files);
     expect(r.json.symbols > 8, 'symbols > 8, got ' + r.json.symbols);
     expect(typeof r.json.elapsed_ms === 'number', 'elapsed_ms present');
-    const compact = await c.toolAs('list_mounted_projects', {});
-    expect(!compact.isError && compact.text.includes(work), 'default project TSV: ' + compact.text);
+    const list = arguments_ => c.call('tools/call', { name: 'list_mounted_projects', arguments: arguments_ });
+    const compact = (await list({})).result;
+    const text = compact.content[0].text;
+    expect(!compact.isError && text.includes(work) && text.includes('\t'), 'default project TSV: ' + text);
+    expectEq(compact.content.length, 1, 'one default content block');
+    expect(!Object.hasOwn(compact, 'structuredContent'), 'no parallel structured payload');
+    expectEq((await list({ format: 'compact' })).result.content[0].text, text, 'implicit and explicit compact match');
+    const md = (await list({ format: 'md' })).result;
+    const fenced = '```text\n' + text + (text.endsWith('\n') ? '' : '\n') + '```\n';
+    expectEq(md.content.length, 1, 'one Markdown content block');
+    expectEq(md.content[0].text, fenced, 'Markdown wraps the compact output');
   });
 
   await runCase('F1.8', '挂载后直接 read_symbol 返回完整实现体', async () => {

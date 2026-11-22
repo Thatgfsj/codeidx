@@ -70,7 +70,7 @@ cargo build --locked --release --bin codeidx-mcp --bin codeidx-tui
 1	27-32	15.98	"unicorn_marker_fn"	"pub fn unicorn_marker_fn(cfg: &GoldConfig) -> String {…"
 ```
 
-结果按文件分组，保留全局排名、行范围、分数和代码片段。正文位于 `content[0].text`，格式可选 `compact`（默认）、`json` 或 `md`。`tools/list` 一次返回全部 11 个工具。挂载后可直接调用任意查询工具。
+结果按文件分组，保留全局排名、行范围、分数和代码片段。正文位于 `content[0].text`，省略 `format` 时只返回 `compact` 正文。需要 JSON 或 Markdown 展示时，分别显式传 `format: "json"` 或 `format: "md"`。`tools/list` 一次返回全部 11 个工具。挂载后可直接调用任意查询工具。
 
 <details>
 <summary>工具一览</summary>
