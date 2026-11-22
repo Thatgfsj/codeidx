@@ -119,6 +119,7 @@ pub(crate) fn build_context(root: &Path, enable_vector: bool) -> Result<BuiltCon
     let mut files: HashMap<String, FileRecord> = HashMap::new();
     let mut skipped_binary = 0u64;
     let mut skipped_oversize = outcome.skipped_oversize;
+    let mut skipped_other = 0usize;
     for lf in loaded {
         let lf = match lf {
             Ok(lf) => lf,
@@ -131,9 +132,13 @@ pub(crate) fn build_context(root: &Path, enable_vector: bool) -> Result<BuiltCon
                 skipped_oversize += 1;
                 continue;
             }
-            Err(walker::LoadSkip::Read) => continue, // 已警告；不属三类计数
+            Err(walker::LoadSkip::Read) => {
+                skipped_other += 1;
+                continue;
+            }
         };
-        if let Err(err) = store.replace_file(&lf.parsed) {
+        if let Err(err) = store.replace_file_with_calls(&lf.parsed, &lf.calls) {
+            skipped_other += 1;
             tracing::warn!(
                 rel = %lf.parsed.rel_path,
                 error = %err.message,
@@ -155,6 +160,7 @@ pub(crate) fn build_context(root: &Path, enable_vector: bool) -> Result<BuiltCon
             store,
             parsed,
             files,
+            callflow_skipped: skipped_other + (skipped_binary + skipped_oversize) as usize,
             vector_degraded,
             vector_degraded_reason: degraded_reason.clone(),
         },

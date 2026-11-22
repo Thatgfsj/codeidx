@@ -12,7 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use codeidx_ast::{detect_lang, parse_file, Lang, ParsedFile};
+use codeidx_ast::{detect_lang, parse_file_with_calls, CallSite, Lang, ParsedFile};
 use ignore::WalkBuilder;
 
 use crate::manager::FileRecord;
@@ -52,6 +52,7 @@ pub(crate) struct SourceFile {
 #[derive(Debug)]
 pub(crate) struct LoadedFile {
     pub parsed: ParsedFile,
+    pub calls: Vec<CallSite>,
     pub record: FileRecord,
 }
 
@@ -81,6 +82,7 @@ pub(crate) struct WalkOutcome {
 /// 遍历项目根，收集全部可索引源文件（按 rel_path 排序保证确定性）。
 ///
 /// 薄壳：仅取文件清单、丢弃计数（sync / 既有单测的兼容入口）。
+#[cfg(test)]
 pub(crate) fn collect(root: &Path) -> Vec<SourceFile> {
     collect_with_counts(root).files
 }
@@ -201,13 +203,17 @@ pub(crate) fn load_file(sf: &SourceFile) -> Result<LoadedFile, LoadSkip> {
     }
     let text = String::from_utf8_lossy(&bytes);
     let hash = blake3::hash(&bytes).to_hex().to_string();
-    let parsed = parse_file(sf.lang, &sf.rel_path, &text);
+    let (parsed, calls) = parse_file_with_calls(sf.lang, &sf.rel_path, &text);
     let record = FileRecord {
         mtime: sf.mtime,
         size: sf.size,
         hash,
     };
-    Ok(LoadedFile { parsed, record })
+    Ok(LoadedFile {
+        parsed,
+        calls,
+        record,
+    })
 }
 
 #[cfg(test)]

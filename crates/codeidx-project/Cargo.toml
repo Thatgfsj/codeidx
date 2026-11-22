@@ -9,6 +9,9 @@ license.workspace = true
 # MountReport / SyncReport 等 DTO 与 ToolError 复用 protocol（与 store → protocol 同一先例）。
 codeidx-ast = { workspace = true }
 codeidx-store = { workspace = true }
+codeidx-lsp = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
 codeidx-protocol = { workspace = true }
 
 dashmap = { workspace = true }

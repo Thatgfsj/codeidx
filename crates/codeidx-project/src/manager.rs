@@ -30,6 +30,7 @@ pub struct ProjectContext {
     pub parsed: HashMap<String, ParsedFile>,
     /// rel_path -> 文件记录（mtime 秒级 + size + blake3 十六进制）。
     pub files: HashMap<String, FileRecord>,
+    pub(crate) callflow_skipped: usize,
     /// 挂载时请求向量但实际降级为纯 FTS5（list / search 降级原因来源）。
     pub vector_degraded: bool,
     /// 降级原因（mount.rs resolve_vector 产出）；未降级为空串。
@@ -178,8 +179,20 @@ impl ProjectManager {
             .ok_or_else(|| Self::not_mounted(path))?;
         // 扫描和入库使用同一项目锁，避免手动和后台同步反序应用扫描快照。
         let mut ctx = project.context.write().unwrap();
-        let present = walker::collect(&root);
-        Ok(sync::reconcile(&mut ctx, present, started))
+        let present = walker::collect_with_counts(&root);
+        ctx.callflow_skipped = present.skipped_oversize as usize;
+        Ok(sync::reconcile(&mut ctx, present.files, started))
+    }
+
+    pub(crate) fn callflow_context(
+        &self,
+        path: &Path,
+    ) -> Result<Arc<RwLock<ProjectContext>>, ToolError> {
+        let root = Self::canonical_root(path).map_err(|_| Self::not_mounted(path))?;
+        self.projects
+            .get(&root)
+            .map(|p| Arc::clone(&p.context))
+            .ok_or_else(|| Self::not_mounted(path))
     }
 
     /// 查询入口：未挂载返回 `project not mounted: <path>`（对齐 F1.11）。
