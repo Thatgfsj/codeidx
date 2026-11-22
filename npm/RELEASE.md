@@ -9,7 +9,7 @@ The first npm version is `0.1.0`. Build from the release commit on main. Do not 
 ```sh
 npm publish thatgfsj-codeidx-linux-x64-0.1.0.tgz --access public
 npm publish thatgfsj-codeidx-win32-x64-0.1.0.tgz --access public
-npm publish codeidx-0.1.0.tgz --access public
+npm publish thatgfsj-codeidx-0.1.0.tgz --access public
 ```
 
-Check the public version with `npm view codeidx@0.1.0`. On each platform, install with optional dependencies enabled and verify both commands. Linux packages are built against Ubuntu 24.04 glibc (2.39); Windows packages target x64 MSVC. For other hosts, build from source. For MCP, configure the installed executable as `codeidx-mcp`, with no arguments.
+Check the public version with `npm view @thatgfsj/codeidx@0.1.0`. On each platform, install with optional dependencies enabled and verify both commands. Linux packages are built against Ubuntu 24.04 glibc (2.39); Windows packages target x64 MSVC. For other hosts, build from source. For MCP, configure the installed executable as `codeidx-mcp`, with no arguments.
