@@ -36,6 +36,9 @@ pub(crate) fn extract_calls(lang: Lang, root: Node<'_>, text: &str) -> Vec<CallS
     let mut cursor = root.walk();
     loop {
         let node = cursor.node();
+        if lang == Lang::Rust && macro_argument_reference(node) {
+            calls.push(site(node, Some(node), text, CallSiteKind::Reference));
+        }
         if let Some(target) = invocation(lang, node) {
             let token = name_node(target);
             calls.push(site(
@@ -83,6 +86,35 @@ pub(crate) fn extract_calls(lang: Lang, root: Node<'_>, text: &str) -> Vec<CallS
     }
 }
 
+// Macro expansion is unavailable. Treat only name + parenthesized tokens as a reference.
+fn macro_argument_reference(node: Node<'_>) -> bool {
+    if node.kind() != "identifier"
+        || node
+            .parent()
+            .is_none_or(|parent| parent.kind() != "token_tree")
+    {
+        return false;
+    }
+    let Some(next) = node
+        .next_sibling()
+        .filter(|next| next.kind() == "token_tree")
+    else {
+        return false;
+    };
+    if next.child(0).is_none_or(|first| first.kind() != "(") {
+        return false;
+    }
+    let mut ancestor = node.parent();
+    while let Some(parent) = ancestor {
+        match parent.kind() {
+            "macro_invocation" => return true,
+            "token_tree" => ancestor = parent.parent(),
+            _ => break,
+        }
+    }
+    false
+}
+
 fn field<'a>(node: Node<'a>, names: &[&str]) -> Option<Node<'a>> {
     names
         .iter()
@@ -115,10 +147,7 @@ fn invocation(lang: Lang, node: Node<'_>) -> Option<Node<'_>> {
         (Lang::CSharp, "invocation_expression") => field(node, &["function"]),
         (Lang::Python, "call") => field(node, &["function"]),
         (Lang::Kotlin, "call_expression") => first_named(node),
-        (Lang::Dart, "argument_part") => {
-            let selector = node.parent().filter(|p| p.kind() == "selector")?;
-            selector.prev_named_sibling()
-        }
+        (Lang::Dart, "cascade_call_expression") => field(node, &["function", "property"]),
         (_, "call_expression") => field(node, &["function"]),
         _ => None,
     }
@@ -147,6 +176,9 @@ fn name_node(mut node: Node<'_>) -> Option<Node<'_>> {
             | "selector_expression"
             | "member_expression"
             | "member_access_expression"
+            | "null_aware_member_expression"
+            | "cascade_member_expression"
+            | "cascade_null_aware_member_expression"
             | "member_binding_expression"
             | "attribute"
             | "navigation_expression"
