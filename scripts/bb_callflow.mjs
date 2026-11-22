@@ -40,7 +40,7 @@ try {
   const subtree = await trace({ from });
   expectEq(subtree.roots.length, 1, 'one continuation root');
   expect(child(root(subtree, 'unicorn_marker_fn'), 'helper_spinner'), 'continuation');
-  const reverse = await trace({ symbol: 'helper_spinner', direction: 'up' });
+  const reverse = await trace({ symbol: 'helper_spinner', file_path: 'src/utils.rs', direction: 'up' });
   expect(child(root(reverse, 'helper_spinner'), 'main'), 'main is a caller');
   const both = await trace({ from, direction: 'both' });
   expect(child(both.roots[0], 'main') && child(both.roots[0], 'helper_spinner'), 'both directions');
