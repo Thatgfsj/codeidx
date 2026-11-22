@@ -3,7 +3,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 pub use codeidx_ast::CallSiteKind;
-use codeidx_ast::{enclosing_symbol, CallSite, ParsedFile};
+use codeidx_ast::{enclosing_symbol, CallSite, CallTarget, ParsedFile};
 use codeidx_protocol::ToolError;
 use rusqlite::{params, Connection};
 
@@ -11,6 +11,10 @@ use crate::store::{poisoned, sqlite_err};
 use crate::Store;
 
 const MAX_CANDIDATES: usize = 16;
+
+#[path = "call_targets.rs"]
+mod targets;
+use targets::{Candidates, Definition};
 
 #[cfg(test)]
 #[path = "call_graph_tests.rs"]
@@ -165,18 +169,25 @@ pub(crate) fn replace_sites(
         .query_map([path], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
         .collect::<rusqlite::Result<Vec<(u32, u32, i64)>>>()?;
     let mut stmt = conn.prepare_cached(
-        "INSERT INTO call_sites (caller_id, source_lang, name, rel_path, line, character, kind)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO call_sites (caller_id, source_lang, name, rel_path, line, character, kind, target_kind, qualifier)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
     )?;
-    let mut insert =
-        |name: &str, line: u32, character: Option<u32>, kind: &str| -> rusqlite::Result<()> {
-            let caller = enclosing_symbol(&spans, line);
-            stmt.execute(params![caller, lang, name, path, line, character, kind])?;
-            if !name.is_empty() {
-                dirty.insert((lang.to_owned(), name.to_owned()));
-            }
-            Ok(())
-        };
+    let mut insert = |name: &str,
+                      line: u32,
+                      character: Option<u32>,
+                      kind: &str,
+                      target: &str,
+                      qualifier: Option<&str>|
+     -> rusqlite::Result<()> {
+        let caller = enclosing_symbol(&spans, line);
+        stmt.execute(params![
+            caller, lang, name, path, line, character, kind, target, qualifier
+        ])?;
+        if !name.is_empty() && target != "unresolved" {
+            dirty.insert((lang.to_owned(), name.to_owned()));
+        }
+        Ok(())
+    };
     if let Some(calls) = calls {
         for call in calls {
             let kind = match call.kind {
@@ -184,13 +195,26 @@ pub(crate) fn replace_sites(
                 CallSiteKind::Callback => "callback",
                 CallSiteKind::Reference => "reference",
             };
-            insert(&call.name, call.line, Some(call.character), kind)?;
+            let (target, qualifier) = match &call.target {
+                CallTarget::Bare => ("bare", None),
+                CallTarget::Owner(owner) => ("owner", Some(owner.as_str())),
+                CallTarget::Module(module) => ("module", Some(module.as_str())),
+                CallTarget::Unresolved => ("unresolved", None),
+            };
+            insert(
+                &call.name,
+                call.line,
+                Some(call.character),
+                kind,
+                target,
+                qualifier,
+            )?;
         }
     } else {
         let mut seen = BTreeSet::new();
         for site in &parsed.refs {
             if seen.insert((&site.name, site.line)) {
-                insert(&site.name, site.line, None, "reference")?;
+                insert(&site.name, site.line, None, "reference", "bare", None)?;
             }
         }
     }
@@ -202,10 +226,11 @@ pub(crate) fn rebuild_names(
     names: BTreeSet<(String, String)>,
 ) -> rusqlite::Result<()> {
     let mut sites = conn.prepare_cached(
-        "SELECT id, rel_path FROM call_sites WHERE source_lang = ?1 AND name = ?2",
+        "SELECT id, rel_path, target_kind, qualifier FROM call_sites
+         WHERE source_lang = ?1 AND name = ?2 AND target_kind <> 'unresolved'",
     )?;
     let mut defs = conn.prepare_cached(
-        "SELECT id, rel_path FROM symbols WHERE source_lang = ?1 AND name = ?2 AND kind IN ('fn', 'method')
+        "SELECT id, rel_path, kind, parent FROM symbols WHERE source_lang = ?1 AND name = ?2 AND kind IN ('fn', 'method')
          ORDER BY rel_path, start_line, end_line, parent, id",
     )?;
     let mut clear = conn.prepare_cached("DELETE FROM call_edges WHERE site_id = ?1")?;
@@ -218,34 +243,29 @@ pub(crate) fn rebuild_names(
     for (lang, name) in names {
         let mut sites = sites.query(params![lang, name])?;
         let Some(first) = sites.next()? else { continue };
-        let mut all = Vec::new();
-        let mut per_path: HashMap<String, Vec<i64>> = HashMap::new();
-        let mut definitions = defs.query(params![lang, name])?;
-        let mut total = 0usize;
-        while let Some(definition) = definitions.next()? {
-            let id = definition.get(0)?;
-            let path = definition.get(1)?;
-            total += 1;
-            if all.len() < MAX_CANDIDATES {
-                all.push(id);
-            }
-            let local = per_path.entry(path).or_default();
-            if local.len() <= MAX_CANDIDATES {
-                local.push(id);
-            }
-        }
+        let definitions = defs
+            .query_map(params![lang, name], |row| {
+                Ok(Definition {
+                    id: row.get(0)?,
+                    path: row.get(1)?,
+                    kind: row.get(2)?,
+                    owner: row.get(3)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut resolved = HashMap::new();
         let mut current = Some(first);
         while let Some(row) = current {
             let site_id: i64 = row.get(0)?;
             let path = row.get_ref(1)?.as_str()?;
-            let (confidence, targets, count) = match (total, per_path.get(path)) {
-                (0, _) => ("unresolved", &all, 0),
-                (1, _) => ("unique", &all, 1),
-                (_, Some(local)) if local.len() == 1 => ("same_file", local, 1),
-                // Multiple local definitions remain ambiguous. Retain all global candidates
-                // to give LSP a chance to pick a definition outside the current file.
-                _ => ("ambiguous", &all, total),
-            };
+            let kind = row.get_ref(2)?.as_str()?;
+            let qualifier = row.get::<_, Option<String>>(3)?;
+            let (confidence, targets, count) = resolved
+                .entry((path.to_owned(), kind.to_owned(), qualifier.clone()))
+                .or_insert_with(|| {
+                    Candidates::select(&definitions, path, kind, qualifier.as_deref())
+                })
+                .view();
             clear.execute([site_id])?;
             update.execute(params![count as i64, confidence, site_id])?;
             for (ordinal, target) in targets.iter().enumerate() {

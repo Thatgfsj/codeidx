@@ -85,7 +85,8 @@ try {
   expectEq(after[0].location.file, 'src/two.rs', 'surviving definition');
   write('lib.rs', `pub mod one;
 pub mod two;
-pub fn bb_resolve() { one::bb_target(); }
+use one::bb_target;
+pub fn bb_resolve() { bb_target(); }
 `);
   write('one.rs', 'pub fn bb_target() {}');
   write('two.rs', 'pub fn bb_target() {}');
@@ -100,6 +101,18 @@ pub fn bb_resolve() { one::bb_target(); }
     expectEq(verified[0].location.file, 'src/one.rs', 'verified definition');
     expectEq(verified[0].confidence, 'lsp', 'verified confidence');
   }
+  write('receivers.rs', `pub struct Known;
+impl Known { pub fn marker(&self) {} }
+pub fn via_parameter(receiver: Known) { receiver.marker(); }
+pub fn via_std(result: Result<u8, ()>) { result.ok(); }
+impl Known { pub fn ok(&self) {} }
+`);
+  await sync();
+  const local = root(await trace({ symbol: 'via_parameter' }), 'via_parameter');
+  expect(child(local, 'marker')?.confidence, 'typed project receiver preserves a static edge');
+  const external = root(await trace({ symbol: 'via_std' }), 'via_std');
+  expect(child(external, 'ok') && !child(external, 'ok').confidence,
+    'typed standard-library receiver does not attach to the local homonym');
   const offline = new McpStdioClient(resolve(process.argv[2]), { env: { PATH: path, Path: path } });
   try {
     await offline.initialize();

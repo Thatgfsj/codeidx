@@ -87,7 +87,7 @@ cargo build --locked --release --bin codeidx-mcp --bin codeidx-tui
 
 </details>
 
-`trace_calls` 以指定函数或自动入口生成调用树。`direction` 支持 `down`、`up` 和 `both`，用节点的文件、行和符号作为 `from` 可继续展开。工具按需用本地 LSP 精化同名候选，无法确认时保留静态候选并报告降级。
+`trace_calls` 以指定函数或自动入口生成调用树。`direction` 支持 `down`、`up` 和 `both`，用节点的文件、行和符号作为 `from` 可继续展开。`unique` 和 `same_file` 表示静态候选，不是语义确认；`✓` 表示本地 LSP 确认了项目内定义。接收者无法确定时不会仅凭同名方法强行连边。`⇢` 表示调用点未解析到项目内定义，可能是外部依赖或动态调用。缺少 LSP 时仍可查询静态结果；发生精化回退时会在摘要中标明。
 
 <a name="terminal"></a>
 
