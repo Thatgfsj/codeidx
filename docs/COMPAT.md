@@ -1,19 +1,16 @@
 # COMPAT — 跨平台兼容矩阵（静态审计 + 契约声明）
 
-> 本文件由优化菜单 #6 审计产出。本机为 Linux，macOS / Windows 结论为
-> 静态审计 + 契约声明，非运行验证。审计方法：全仓静态 grep（cfg 门、
-> mallopt 家族、/proc、signal、VmRSS、os::unix / nix / libc、kill /
-> canonicalize）+ Linux 三件套编译实测。
+> Linux 已实测。Windows MSVC 已在 [GitHub 原生 runner](https://github.com/Thatgfsj/codeidx/actions/runs/44938967016) 验证 MCP 构建、挂载、关键词搜索及 Rust 定义查询。Windows 的交互式 TUI 和 macOS 运行仍待验证。
 
 ## 1. 支持矩阵
 
 | 能力 | Linux | macOS | Windows |
 |---|---|---|---|
-| workspace 编译 | ✓ 实测 | ✓ 理论（unix 家族，无 cfg 拦截点） | ✓ 理论（信号守卫修复后无编译拦截） |
-| stdio JSON-RPC 主循环（11 工具） | ✓ 实测 | ✓ 理论 | ✓ 理论 |
+| workspace 编译 | ✓ 实测 | ✓ 理论（unix 家族，无 cfg 拦截点） | ✓ MSVC 实测 |
+| stdio JSON-RPC 主循环（11 工具） | ✓ 实测 | ✓ 理论 | ✓ 实测 |
 | 挂载 / 增量 sync / 检索 / RepoMap | ✓ 实测 | ✓ 理论 | ✓ 理论 |
 | SIGINT / SIGTERM 优雅退出（F1.12） | ✓ 实测 | ✓ 理论（同为 unix 信号模型） | ✗ SIGTERM 无等价物；CTRL_C 事件降级 |
-| LSP 子进程桥 + idle reaper（F3.x） | ✓ 实测 | ✓ 理论 | △ 未实测（rust-analyzer 有 Windows 版） |
+| LSP 子进程桥 + idle reaper（F3.x） | ✓ 实测 | ✓ 理论 | Rust 定义查询已实测，空闲回收未专项验证 |
 | VmRSS 内存估算 mem_est_mb（F1.14） | ✓ 实测 | ✗ 无 /proc → 0.0（不设门） | ✗ 同左 |
 | malloc arena 上限（RSS 抑制） | ✓ 实测 | ✗ 无 glibc → 编译剔除 | ✗ 无 glibc → 编译剔除 |
 | LSP 可执行文件探测 | ✓ 实测 | ✓ 理论 | 按 PATH 和 PATHEXT 解析可启动文件 |
