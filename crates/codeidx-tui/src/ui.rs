@@ -3,7 +3,9 @@
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, List, ListItem, Paragraph, Row, Table, Tabs, Wrap};
+use ratatui::widgets::{
+    Block, Clear, List, ListItem, ListState, Paragraph, Row, Table, Tabs, Wrap,
+};
 use ratatui::Frame;
 
 use codeidx_protocol::tools::{SearchMode, SymbolCode};
@@ -106,22 +108,17 @@ fn draw_mount_page(f: &mut Frame, area: Rect, app: &App) {
         );
     }
 
-    let items: Vec<ListItem> = page
-        .home_dirs
-        .iter()
-        .enumerate()
-        .map(|(i, dir)| {
-            let style = if i == page.sel {
-                Style::new().fg(Color::Black).bg(Color::Cyan)
-            } else {
-                Style::new().fg(Color::DarkGray)
-            };
-            ListItem::new(Line::from(dir.clone()).style(style))
-        })
-        .collect();
-    f.render_widget(
-        List::new(items).block(Block::bordered().title("HOME 目录 (↑↓: 填充路径)")),
+    let block = Block::bordered().title("HOME 目录 (↑↓: 填充路径)");
+    let visible = block.inner(list_area).height as usize;
+    let mut state = list_viewport(page.home_dirs.len(), page.sel, visible);
+    let items = page.home_dirs.iter().map(|dir| ListItem::new(dir.as_str()));
+    f.render_stateful_widget(
+        List::new(items)
+            .block(block)
+            .style(Style::new().fg(Color::DarkGray))
+            .highlight_style(Style::new().fg(Color::Black).bg(Color::Cyan)),
         list_area,
+        &mut state,
     );
 
     let tip = if page.err.is_empty() {
@@ -135,6 +132,20 @@ fn draw_mount_page(f: &mut Frame, area: Rect, app: &App) {
         Style::new().fg(Color::Red)
     };
     f.render_widget(Paragraph::new(tip).style(style), err_area);
+}
+
+/// 从选中项和当前视口高度推导滚动位置，终端缩放时也能保持可见。
+pub(crate) fn list_viewport(len: usize, selected: usize, visible: usize) -> ListState {
+    let Some(last) = len.checked_sub(1) else {
+        return ListState::default();
+    };
+    let selected = selected.min(last);
+    let offset = selected
+        .saturating_sub(visible / 2)
+        .min(len.saturating_sub(visible));
+    ListState::default()
+        .with_offset(offset)
+        .with_selected(Some(selected))
 }
 
 /// 挂载后主区：tab 标题栏 + tab 内容。
