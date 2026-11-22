@@ -22,9 +22,34 @@ CREATE TABLE symbols (
     start_line  INTEGER NOT NULL,
     end_line    INTEGER NOT NULL,
     signature   TEXT NOT NULL,
-    parent      TEXT
+    parent      TEXT,
+    source_lang TEXT NOT NULL
 );
 CREATE INDEX idx_symbols_rel ON symbols(rel_path);
+CREATE INDEX idx_symbols_call_name ON symbols(source_lang, name) WHERE kind IN ('fn', 'method');
+
+CREATE TABLE call_sites (
+    id INTEGER PRIMARY KEY,
+    caller_id INTEGER,
+    source_lang TEXT NOT NULL,
+    name TEXT NOT NULL,
+    rel_path TEXT NOT NULL,
+    line INTEGER NOT NULL,
+    character INTEGER,
+    kind TEXT NOT NULL,
+    candidate_count INTEGER NOT NULL DEFAULT 0,
+    confidence TEXT NOT NULL DEFAULT 'unresolved'
+);
+CREATE INDEX idx_call_sites_rel ON call_sites(rel_path);
+CREATE INDEX idx_call_sites_name ON call_sites(source_lang, name);
+
+CREATE TABLE call_edges (
+    site_id INTEGER NOT NULL,
+    callee_id INTEGER NOT NULL,
+    ordinal INTEGER NOT NULL,
+    PRIMARY KEY (site_id, ordinal)
+) WITHOUT ROWID;
+CREATE INDEX idx_call_edges_target ON call_edges(callee_id);
 
 CREATE TABLE refs (
     id       INTEGER PRIMARY KEY,

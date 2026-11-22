@@ -7,10 +7,11 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
-use codeidx_ast::{ParsedFile, SymbolKind};
+use codeidx_ast::{CallSite, ParsedFile, SymbolKind};
 use codeidx_protocol::{OutlineEntry, SymbolCode, ToolError};
 use rusqlite::{params, Connection};
 
+use crate::call_graph;
 use crate::embedder::Embedder;
 use crate::schema;
 use crate::tokens;
@@ -164,6 +165,23 @@ impl Store {
     /// 跳过向量列（纯 FTS5 模式）。嵌入在事务提交后批量执行（锁内、
     /// 事务外）：失败仅 stderr 警告，FTS 已入库且下次替换自愈。
     pub fn replace_file(&self, parsed: &ParsedFile) -> Result<(), ToolError> {
+        self.replace_file_inner(parsed, None)
+    }
+
+    /// Replace a file and its syntax-backed call sites in the same transaction.
+    pub fn replace_file_with_calls(
+        &self,
+        parsed: &ParsedFile,
+        calls: &[CallSite],
+    ) -> Result<(), ToolError> {
+        self.replace_file_inner(parsed, Some(calls))
+    }
+
+    fn replace_file_inner(
+        &self,
+        parsed: &ParsedFile,
+        calls: Option<&[CallSite]>,
+    ) -> Result<(), ToolError> {
         let embedder = self.embedder_snapshot();
         let vector_active = self.enable_vector && embedder.is_some();
         let mut conn = self.conn.lock().map_err(|_| poisoned())?;
@@ -174,6 +192,8 @@ impl Store {
             HashMap::new()
         };
         let tx = conn.transaction().map_err(sqlite_err)?;
+        let dirty_calls = call_graph::old_definitions(&tx, &parsed.rel_path).map_err(sqlite_err)?;
+        let source_lang = format!("{:?}", parsed.lang);
         // 1) 清旧：fts → vec_chunks → chunks（DELETE 依赖 chunks 子查询）。
         tx.execute(
             "DELETE FROM fts WHERE rowid IN (SELECT id FROM chunks WHERE rel_path = ?1)",
@@ -205,8 +225,8 @@ impl Store {
         // 2) 写新：symbols / refs。
         for s in &parsed.symbols {
             tx.execute(
-                "INSERT INTO symbols(rel_path, name, kind, start_line, end_line, signature, parent)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO symbols(rel_path, name, kind, start_line, end_line, signature, parent, source_lang)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     parsed.rel_path,
                     s.name,
@@ -214,7 +234,8 @@ impl Store {
                     s.start_line,
                     s.end_line,
                     s.signature,
-                    s.parent
+                    s.parent,
+                    source_lang
                 ],
             )
             .map_err(sqlite_err)?;
@@ -226,6 +247,8 @@ impl Store {
             )
             .map_err(sqlite_err)?;
         }
+        call_graph::replace_sites(&tx, parsed, calls, &source_lang, dirty_calls)
+            .map_err(sqlite_err)?;
         // 3) 写新：chunks + fts +（向量激活时）复用或收集待嵌入。
         //    fts.rowid 与 chunk.id 对齐；tokens 为分词辅助列。
         let mut pending: Vec<(i64, String)> = Vec::new();
@@ -283,6 +306,8 @@ impl Store {
     pub fn remove_file(&self, rel: &str) -> Result<(), ToolError> {
         let mut conn = self.conn.lock().map_err(|_| poisoned())?;
         let tx = conn.transaction().map_err(sqlite_err)?;
+        let dirty_calls = call_graph::old_definitions(&tx, rel).map_err(sqlite_err)?;
+        call_graph::remove_sites(&tx, rel).map_err(sqlite_err)?;
         tx.execute(
             "DELETE FROM fts WHERE rowid IN (SELECT id FROM chunks WHERE rel_path = ?1)",
             params![rel],
@@ -302,6 +327,7 @@ impl Store {
             .map_err(sqlite_err)?;
         tx.execute("DELETE FROM refs WHERE rel_path = ?1", params![rel])
             .map_err(sqlite_err)?;
+        call_graph::rebuild_names(&tx, dirty_calls).map_err(sqlite_err)?;
         tx.commit().map_err(sqlite_err)
     }
 

@@ -148,10 +148,5 @@ fn ref_site_symbol(
     rel_path: &str,
     line: u32,
 ) -> Option<usize> {
-    let spans = spans_by_file.get(rel_path)?;
-    spans
-        .iter()
-        .filter(|(s, e, _)| line >= *s && line <= *e)
-        .min_by_key(|(s, e, _)| e - s)
-        .map(|(_, _, idx)| *idx)
+    crate::enclosing_symbol(spans_by_file.get(rel_path)?, line)
 }
