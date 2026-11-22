@@ -44,6 +44,14 @@ pub fn run(fixture_arg: Option<&str>) -> u8 {
         println!("[FAIL] fixture copy: {e}");
         return 1;
     }
+    // ProjectManager returns the canonical project root, including the Windows verbatim prefix.
+    let tmp = match tmp.canonicalize() {
+        Ok(path) => path,
+        Err(e) => {
+            println!("[FAIL] fixture canonicalize: {e}");
+            return 1;
+        }
+    };
     checks.push(
         &format!("fixture 副本就绪: {}", tmp.display()),
         tmp.join("src/lib.rs").exists(),
