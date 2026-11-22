@@ -13,6 +13,9 @@ use crate::ProjectManager;
 mod index;
 #[path = "callflow_refine.rs"]
 mod refine;
+#[cfg(test)]
+#[path = "callflow_tests.rs"]
+mod tests;
 
 use index::{Graph, NodeId, SiteId};
 use refine::Refiner;
@@ -206,7 +209,8 @@ impl<'a> Walk<'a> {
         } else {
             for (i, &(site, branch)) in raw.iter().enumerate() {
                 if self.nodes == self.options.max_nodes || self.remaining_bytes < 96 {
-                    let missing = raw[i..].iter().map(|&(s, b)| self.known_count(s, b)).sum();
+                    let missing: usize =
+                        raw[i..].iter().map(|&(s, b)| self.known_count(s, b)).sum();
                     if self.nodes == self.options.max_nodes {
                         self.truncated.nodes += missing;
                     } else {
@@ -218,7 +222,7 @@ impl<'a> Walk<'a> {
                 let edges = self.edges_at(id, site, branch).await;
                 for (j, edge) in edges.iter().enumerate() {
                     if !self.reserve(edge, depth + 1, edges.len() - j) {
-                        let more = raw[i + 1..]
+                        let more: usize = raw[i + 1..]
                             .iter()
                             .map(|&(s, b)| self.known_count(s, b))
                             .sum::<usize>();
