@@ -1,7 +1,4 @@
-//! 工具路由表：11 个工具的名称 → 执行器映射与统一分发。
-//!
-//! Phase 1-A：全部 handler 为 stub（见 handlers 模块）。
-//! 真实实现分别由 Phase 1-B/C（索引、检索）与 Phase 3（LSP 桥）接管。
+//! 同步工具路由表。异步工具在 server.rs 中分发。
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -32,8 +29,7 @@ fn route_table() -> &'static HashMap<&'static str, ToolHandler> {
         table.insert(tool_name::SEARCH_CODE, handlers::search_code);
         table.insert(tool_name::GET_FILE_OUTLINE, handlers::get_file_outline);
         table.insert(tool_name::READ_SYMBOL, handlers::read_symbol);
-        // lsp_* 三工具不进同步表：server.rs 在 tools/call 层按名 async
-        // 分流到 handlers::lsp_dispatch（LSP 子进程往返是异步语义）。
+        // server.rs 单独分发 lsp_* 和 trace_calls。
         table
     })
 }
@@ -57,19 +53,16 @@ mod tests {
     use super::*;
     use codeidx_protocol::mcp::Content;
 
-    /// 同步路由表仅承载 8 个非 LSP 工具；lsp_* 三项由 server.rs 的
-    /// tools/call 层按名 async 分流到 handlers::lsp_dispatch。
+    /// 工具目录的每个名称必须对应同步路由或异步分发。
     #[test]
-    fn sync_table_holds_8_tools_lsp_routed_async() {
+    fn sync_table_excludes_async_tools() {
         assert_eq!(route_table().len(), 8);
         for spec in codeidx_protocol::schema::TOOL_SPECS.iter() {
-            let is_lsp = matches!(
-                spec.name,
-                tool_name::LSP_DEFINITION | tool_name::LSP_REFERENCES | tool_name::LSP_HOVER
-            );
+            let is_async =
+                crate::server::is_lsp_tool(spec.name) || spec.name == tool_name::TRACE_CALLS;
             assert_eq!(
                 route_table().contains_key(spec.name),
-                !is_lsp,
+                !is_async,
                 "unexpected routing for {}",
                 spec.name
             );

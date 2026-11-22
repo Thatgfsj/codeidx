@@ -17,7 +17,7 @@ use codeidx_protocol::mcp::{self, ToolsCallParams};
 use codeidx_protocol::schema::TOOL_SPECS;
 use codeidx_protocol::tools::tool_name;
 
-use crate::{handlers, router};
+use crate::{callflow, handlers, router};
 
 /// stdin 逐行流类型（两平台主循环共用）。
 type LineStream = tokio::io::Lines<BufReader<tokio::io::Stdin>>;
@@ -159,7 +159,7 @@ async fn handle_line(raw: &str, stdout: &mut BufWriter<Stdout>) -> std::io::Resu
     Ok(())
 }
 
-/// RPC 方法分发（协议层）。async：tools/call 的 lsp_* 语义请求要 await。
+/// RPC 方法分发。LSP 与调用链请求走异步路径。
 async fn dispatch_request(request: &Request) -> Outgoing {
     match request.method.as_str() {
         mcp::method::INITIALIZE => {
@@ -202,7 +202,7 @@ fn initialize_result() -> mcp::InitializeResult {
     }
 }
 
-/// tools/list 响应：11 个工具的描述符（schema 表为唯一事实来源）。
+/// tools/list 响应：12 个工具的描述符（schema 表为唯一事实来源）。
 fn tools_list_result() -> mcp::ToolsListResult {
     mcp::ToolsListResult {
         tools: TOOL_SPECS.iter().map(|spec| spec.to_descriptor()).collect(),
@@ -212,8 +212,7 @@ fn tools_list_result() -> mcp::ToolsListResult {
 /// tools/call 分发：params 结构非法走协议级 INVALID_PARAMS，
 /// 工具执行失败走 isError（契约见 ARCHITECTURE §4）。
 ///
-/// lsp_* 三工具是 async 语义请求（LSP 子进程往返），在 server 层按名
-/// 分流到 handlers::lsp_dispatch；其余 8 工具走同步 router 表。
+/// `trace_calls` 和 `lsp_*` 可以异步等待 LSP，其余工具走同步路由。
 async fn handle_tools_call(request: &Request) -> Outgoing {
     let params: ToolsCallParams =
         match serde_json::from_value(request.params.clone().unwrap_or(Value::Null)) {
@@ -227,7 +226,12 @@ async fn handle_tools_call(request: &Request) -> Outgoing {
             }
         };
     tracing::debug!(tool = %params.name, "tools/call");
-    let result = if is_lsp_tool(&params.name) {
+    let result = if params.name == tool_name::TRACE_CALLS {
+        match callflow::dispatch(&params.arguments).await {
+            Ok(payload) => payload.into(),
+            Err(err) => err.into(),
+        }
+    } else if is_lsp_tool(&params.name) {
         match handlers::lsp_dispatch(&params.name, &params.arguments).await {
             Ok(payload) => payload.into(),
             Err(err) => err.into(),
@@ -239,7 +243,7 @@ async fn handle_tools_call(request: &Request) -> Outgoing {
 }
 
 /// lsp_* 语义工具名（async 分流名单，与 router 表的工具名常量一致）。
-fn is_lsp_tool(name: &str) -> bool {
+pub(crate) fn is_lsp_tool(name: &str) -> bool {
     matches!(
         name,
         tool_name::LSP_DEFINITION | tool_name::LSP_REFERENCES | tool_name::LSP_HOVER
