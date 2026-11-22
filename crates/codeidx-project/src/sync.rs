@@ -128,7 +128,7 @@ pub(crate) fn reconcile_changes(
                 continue;
             }
         }
-        if let Err(err) = ctx.store.replace_file(&lf.parsed) {
+        if let Err(err) = ctx.store.replace_file_with_calls(&lf.parsed, &lf.calls) {
             tracing::warn!(
                 rel = %sf.rel_path,
                 error = %err.message,
@@ -151,6 +151,7 @@ pub(crate) fn reconcile_changes(
         }
     }
 
+    ctx.callflow_skipped += failed as usize;
     SyncReport {
         added: added_n,
         modified: modified_n,
@@ -192,6 +193,7 @@ mod tests {
             store: Store::new(false).expect("store"),
             parsed: HashMap::new(),
             files: HashMap::new(),
+            callflow_skipped: 0,
             vector_degraded: false,
             vector_degraded_reason: String::new(),
         }

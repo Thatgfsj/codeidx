@@ -11,6 +11,8 @@
 //! 红线（ARCHITECTURE §4/§5）：本 crate 不向 stdout 输出任何字节；
 //! 单文件解析失败一律 tracing（stderr）警告后跳过，绝不 panic 中断整库。
 
+pub mod callflow;
+mod callflow_types;
 mod manager;
 mod mount;
 mod sync;

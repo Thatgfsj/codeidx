@@ -21,6 +21,17 @@ use crate::proto::{self, is_meaningful, LspError, REQUEST_TIMEOUT_SECS};
 /// 每个在途请求的回填通道：Ok = 响应 result，Err = 服务器 error 文案。
 type Reply = Result<Value, String>;
 
+struct PendingReply<'a> {
+    pending: &'a DashMap<i64, oneshot::Sender<Reply>>,
+    id: i64,
+}
+
+impl Drop for PendingReply<'_> {
+    fn drop(&mut self) {
+        self.pending.remove(&self.id);
+    }
+}
+
 /// 冷启动"暂无结果"的重试预算与轮询间隔。
 ///
 /// rust-analyzer 在 workspace（crate graph）加载完成前对 definition /
@@ -132,23 +143,23 @@ impl LspProcess {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = oneshot::channel();
         self.pending.insert(id, tx);
+        let _pending = PendingReply {
+            pending: &self.pending,
+            id,
+        };
         let msg = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
         let write = {
             let mut w = self.stdin.lock().await;
             proto::write_frame(&mut *w, &msg).await
         };
         if let Err(e) = write {
-            self.pending.remove(&id);
             return Err(LspError(format!("failed to write request {method}: {e}")));
         }
         let outcome = timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS), rx).await;
         match outcome {
-            Err(_) => {
-                self.pending.remove(&id);
-                Err(LspError(format!(
-                    "{method} timed out after {REQUEST_TIMEOUT_SECS}s"
-                )))
-            }
+            Err(_) => Err(LspError(format!(
+                "{method} timed out after {REQUEST_TIMEOUT_SECS}s"
+            ))),
             Ok(Err(_canceled)) => Err(LspError(format!(
                 "language server closed connection during {method}"
             ))),

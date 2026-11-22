@@ -120,8 +120,9 @@ impl Subscription {
                     continue;
                 }
                 let started = Instant::now();
-                let present = walker::collect(&ctx.root);
-                let report = sync::reconcile_changes(&mut ctx, present, started, |path| changes.contains(path));
+                let present = walker::collect_with_counts(&ctx.root);
+                ctx.callflow_skipped = present.skipped_oversize as usize;
+                let report = sync::reconcile_changes(&mut ctx, present.files, started, |path| changes.contains(path));
                 if report.failed > 0 {
                     tracing::warn!(root = %ctx.root.display(), failed = report.failed, "automatic sync incomplete");
                 }
