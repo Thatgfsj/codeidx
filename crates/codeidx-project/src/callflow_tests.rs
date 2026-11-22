@@ -52,7 +52,7 @@ async fn rust_definition_refines_an_ambiguous_site() {
     fs::write(root.join("Cargo.toml"), "[package]\nname = \"trace_fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[lib]\npath = \"entry.rs\"\n").unwrap();
     fs::write(
         root.join("entry.rs"),
-        "mod first;\nmod second;\npub fn caller() { first::ambiguous(); }\n",
+        "mod first;\nmod second;\nuse first::ambiguous;\npub fn caller() { ambiguous(); }\n",
     )
     .unwrap();
     let pm = ProjectManager::new();
