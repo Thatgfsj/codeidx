@@ -45,6 +45,41 @@ impl Drop for Fixture {
 }
 
 #[tokio::test]
+#[ignore = "requires a rust-analyzer installation"]
+async fn rust_definition_refines_an_ambiguous_site() {
+    let fixture = Fixture::create();
+    let root = &fixture.0;
+    fs::write(root.join("Cargo.toml"), "[package]\nname = \"trace_fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[lib]\npath = \"entry.rs\"\n").unwrap();
+    fs::write(
+        root.join("entry.rs"),
+        "mod first;\nmod second;\npub fn caller() { first::ambiguous(); }\n",
+    )
+    .unwrap();
+    let pm = ProjectManager::new();
+    pm.mount_with_auto_sync(root, false, false).unwrap();
+    let bridge = LspBridge::new(60);
+    let options = TraceOptions {
+        symbol: Some("caller".into()),
+        ..Default::default()
+    };
+    let static_result = trace_calls(&pm, None, root.to_str().unwrap(), options.clone())
+        .await
+        .unwrap();
+    assert_eq!(static_result.roots[0].children.len(), 2);
+    let result = trace_calls(&pm, Some(&bridge), root.to_str().unwrap(), options)
+        .await
+        .unwrap();
+    bridge.kill_all();
+    assert_eq!(result.lsp_refined, 1, "{result:?}");
+    assert_eq!(result.roots[0].children.len(), 1);
+    assert_eq!(result.roots[0].children[0].location.file, "first.rs");
+    assert_eq!(
+        result.roots[0].children[0].confidence,
+        Some(TraceConfidence::Lsp)
+    );
+}
+
+#[tokio::test]
 async fn directions_cycles_continuation_and_degradation() {
     let f = Fixture::create();
     let pm = ProjectManager::new();

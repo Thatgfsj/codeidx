@@ -1,6 +1,6 @@
 //! `--selftest`：无 tty 全状态机自检（Lead 黑盒验收入口，CI 友好）。
 //!
-//! 流程：复制 fixture 副本 → 真引擎驱动键序列（mount → 五 tab → unmount）
+//! 流程：复制 fixture 副本 → 真引擎驱动键序列（mount → 六个 tab → unmount）
 //! → 每步以 TestBackend 渲染一帧并断言关键文本 → 全部 PASS 输出绿色清单，
 //! 任一 FAIL 退出码 1。不依赖 HOME 目录列表、不拉起真实语言服务器。
 
@@ -243,6 +243,75 @@ pub fn run(fixture_arg: Option<&str>) -> u8 {
     let text = ui::render_text(&app, 110, 44);
     checks.push("lsp: 冷启动提示可见", text.contains("冷启动"));
     checks.push("lsp: position 输入框", text.contains("position"));
+
+    // Calls tab: query the real index in static mode so selftest needs no LSP binary.
+    app.call_tree.refine = false;
+    let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+    let cmds = app.handle_key(key(KeyCode::F(6)));
+    checks.push(
+        "calls: F6 发起静态追踪",
+        app.tab == Tab::CallTree
+            && matches!(cmds.as_slice(), [Cmd::TraceCalls { refine: false, .. }]),
+    );
+    for cmd in cmds {
+        apply_tree(&eng, &rx, &mut app, exec(&eng, &rx, cmd));
+    }
+    let main = app.call_tree.rows().iter().position(|row| {
+        row.node.location.symbol == "main" && row.node.location.file == "src/main.rs"
+    });
+    checks.push("calls: 从真实索引获得 main 入口", main.is_some());
+    if let Some(main) = main {
+        for _ in 0..main {
+            app.handle_key(key(KeyCode::Down));
+        }
+        let text = ui::render_text(&app, 110, 44);
+        checks.push(
+            "calls: 树中渲染 main 和符号位置",
+            text.contains("▾ main") && text.contains("src/main.rs:7"),
+        );
+        let expanded = app.call_tree.rows().len();
+        app.handle_key(key(KeyCode::Left));
+        let text = ui::render_text(&app, 110, 44);
+        checks.push(
+            "calls: 左键折叠并隐藏后代",
+            text.contains("▸ main") && app.call_tree.rows().len() < expanded,
+        );
+        app.handle_key(key(KeyCode::Right));
+        checks.push(
+            "calls: 右键恢复后代",
+            app.call_tree.rows().len() == expanded,
+        );
+        app.handle_key(key(KeyCode::Right));
+        let selected = app
+            .call_tree
+            .rows()
+            .get(app.call_tree.selected())
+            .map(|r| r.node.location.clone());
+        let cmds = app.handle_key(key(KeyCode::Char('t')));
+        checks.push("calls: t 使用选中位置续查", matches!(cmds.as_slice(), [Cmd::TraceCalls{from: Some(from), ..}] if Some(from) == selected.as_ref()));
+        for cmd in cmds {
+            apply_tree(&eng, &rx, &mut app, exec(&eng, &rx, cmd));
+        }
+        checks.push(
+            "calls: 续查以选中位置为根",
+            app.call_tree.report().is_some_and(|r| {
+                r.roots.len() == 1 && Some(&r.roots[0].location) == selected.as_ref()
+            }),
+        );
+        let cmds = app.handle_key(key(KeyCode::Enter));
+        for cmd in cmds {
+            apply_tree(&eng, &rx, &mut app, exec(&eng, &rx, cmd));
+        }
+        checks.push("calls: Enter 打开选中定义的源码", matches!(&app.dialog, crate::app::Dialog::SymbolText(code) if selected.as_ref().is_some_and(|at| at.file == code.file && at.line == code.start_line && at.symbol == code.name) && !code.code.is_empty()));
+        if app.dialog != crate::app::Dialog::None {
+            app.handle_key(key(KeyCode::Esc));
+        }
+        app.handle_key(key(KeyCode::Esc));
+        checks.push(
+            "calls: Esc 返回前一个树视图",
+            app.call_tree.rows().len() == expanded,
+        );
+    }
 
     // 12) Projects tab：刷新列表。
     let _ = app.handle_key(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE));
