@@ -21,11 +21,15 @@ pub struct ToolSpec {
 impl ToolSpec {
     /// 转为 MCP 工具描述符。
     pub fn to_descriptor(&self) -> ToolDescriptor {
+        let mut input_schema: serde_json::Value = serde_json::from_str(self.schema_json)
+            .expect("tool schema is valid JSON (guarded by unit tests)");
+        input_schema["properties"]["format"] = serde_json::json!({
+            "type": "string", "enum": ["compact", "json", "md"], "default": "compact"
+        });
         ToolDescriptor {
             name: self.name.to_owned(),
             description: self.description.to_owned(),
-            input_schema: serde_json::from_str(self.schema_json)
-                .expect("tool schema is valid JSON (guarded by unit tests)"),
+            input_schema,
         }
     }
 }
@@ -54,17 +58,17 @@ pub const TOOL_SPECS: [ToolSpec; 11] = [
     },
     ToolSpec {
         name: tool_name::GET_REPO_MAP,
-        description: "返回 PageRank 加权的代码骨架图（纯文本，省 token）。",
+        description: "按 PageRank 选择符号。紧凑正文按文件分组，缩进记录行号、类型和名称。",
         schema_json: r#"{"type":"object","properties":{"path":{"type":"string","description":"已挂载项目的根目录绝对路径"},"focus_files":{"type":"array","items":{"type":"string"},"description":"聚焦文件（相对路径，其符号权重显著提升）"},"token_budget":{"type":"integer","minimum":1,"description":"输出 token 预算","default":3000}},"required":["path"]}"#,
     },
     ToolSpec {
         name: tool_name::SEARCH_CODE,
-        description: "在项目中检索代码，支持 keyword / vector / hybrid 三种模式；results 为紧凑行文本：首行 # search hits=<shown> truncated_hits=<k> tokens≈<t>/budget=<b>，次行列名，数据行 file<TAB>symbol<TAB>start<TAB>end<TAB>score<TAB>snippet（score 四位小数）。",
+        description: "检索代码（keyword/vector/hybrid）。紧凑结果先给实际模式、降级和截断，再按 @path 分组，命中含排名、行范围、分数、符号和片段。",
         schema_json: r#"{"type":"object","properties":{"path":{"type":"string","description":"已挂载项目的根目录绝对路径"},"query":{"type":"string","description":"检索词"},"mode":{"type":"string","enum":["hybrid","keyword","vector"],"description":"检索模式","default":"hybrid"},"top_k":{"type":"integer","minimum":1,"maximum":50,"description":"返回命中数上限","default":8},"token_budget":{"type":"integer","minimum":200,"maximum":8000,"description":"结果 token 预算（超预算数据行截断并计 truncated_hits）","default":1200}},"required":["path","query"]}"#,
     },
     ToolSpec {
         name: tool_name::GET_FILE_OUTLINE,
-        description: "返回单个文件的符号大纲（无函数体）；紧凑行文本：首行 # outline file=<rel> symbols=<n>，数据行 kind<TAB>name<TAB>start<TAB>end<TAB>sig。",
+        description: "单文件符号大纲（无函数体）。紧凑正文按行给起止行、类型、名称和签名。",
         schema_json: r#"{"type":"object","properties":{"path":{"type":"string","description":"已挂载项目的根目录绝对路径"},"file_path":{"type":"string","description":"目标文件相对路径"}},"required":["path","file_path"]}"#,
     },
     ToolSpec {

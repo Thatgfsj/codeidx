@@ -75,6 +75,11 @@ export class McpStdioClient {
 
   // tools/call 便捷封装：返回 { isError, text, json }
   async tool(name, args, opts) {
+    // Existing regression scripts exercise the machine-readable output.
+    return this.toolAs(name, { format: 'json', ...args }, opts);
+  }
+
+  async toolAs(name, args, opts) {
     const res = await this.call('tools/call', { name, arguments: args }, opts);
     if (res.error) return { isError: true, text: JSON.stringify(res.error), json: null, rpcError: res.error };
     const r = res.result;

@@ -90,7 +90,7 @@ mod tests {
     fn mount_returns_json_report() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/sample-project");
-        let args = serde_json::json!({"path": root});
+        let args = serde_json::json!({"path": root, "format": "json"});
         let result = dispatch(tool_name::MOUNT_PROJECT, &args);
         assert!(!result.is_error, "mount fixture must succeed");
         match &result.content[0] {

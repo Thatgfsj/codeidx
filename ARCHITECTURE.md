@@ -60,19 +60,17 @@ ast, protocol  // 叶子 crate，无内部依赖
 
 行号约定：对外一律 1-based line、0-based character（UTF-16 code unit，LSP 对齐）。
 
-| 工具 | 参数 | 成功返回（紧凑 JSON，省 token） |
-|---|---|---|
-| mount_project | path: string, enable_vector?: bool=false, auto_sync?: bool=true | `{mounted,path,files,symbols,elapsed_ms,mem_est_mb,vector}` |
-| unmount_project | path: string | `{unmounted:true,killed_lsps:N}` |
-| list_mounted_projects | — | `{projects:[{path,files,symbols,lsps:[..],vector}]}` |
-| sync_project | path: string | `{added,modified,removed,files,elapsed_ms}` |
-| get_repo_map | path, focus_files?: string[], token_budget?: number=3000 | 纯文本骨架：每行 `<rel_path>:<line> <kind> <name>`，PageRank 权重降序，超预算截断并附尾行 `(truncated, budget=<n>)` |
-| search_code | path, query: string, mode?: "hybrid"|"keyword"|"vector"=hybrid, top_k?: number=8(≤50), token_budget?: number=1200(200..8000) | JSON 壳 `{results:"紧凑行文本",mode,elapsed_ms,degraded,degraded_reason,total_candidates}`：行文本首行 `# search hits=<shown> truncated_hits=<k> tokens≈<t>/budget=<b>`、次行列名，数据行 `file<TAB>symbol<TAB>start<TAB>end<TAB>score<TAB>snippet`（score 四位小数；snippet ≤ 3 行、内换行转义 \n、symbol 缺省 -） |
-| get_file_outline | path, file_path: string | 紧凑行文本：首行 `# outline file=<rel> symbols=<n>`，数据行 `kind<TAB>name<TAB>start<TAB>end<TAB>sig`（无函数体；空符号文件 symbols=0 真实标记空） |
-| read_symbol | path, file_path, symbol_name | `{file,name,start_line,end_line,code}`，完整实现体 |
-| lsp_definition | path, file_path, line, character | `{locations:[{file,line,character}]}` |
-| lsp_references | path, file_path, line, character | `{locations:[{file,line,character}]}` |
-| lsp_hover | path, file_path, line, character | `{contents}`（Phase 3） |
+所有工具支持可选 `format=compact|json|md`，默认 `compact`。JSON-RPC 信封独立于结果正文格式。
+
+| 工具 | 默认结果正文 |
+|---|---|
+| mount_project / unmount_project / sync_project | 键值摘要，含跳过、降级或同步失败数据 |
+| list_mounted_projects | 项目 TSV |
+| get_repo_map / get_file_outline | 按路径分组的符号或单文件符号行 |
+| search_code | 模式和预算摘要，加按路径分组的命中 |
+| read_symbol | 路径、行范围和完整实现 |
+| lsp_definition / lsp_references | `path:line:character` 位置 |
+| lsp_hover | 悬停文本 |
 
 ## 5. 硬性工程约束
 

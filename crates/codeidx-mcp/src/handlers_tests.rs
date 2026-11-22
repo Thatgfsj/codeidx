@@ -54,7 +54,7 @@ fn text_of(result: Result<ToolPayload, ToolError>) -> String {
 fn mount_returns_real_stats_json() {
     let root = temp_project("mount-json space 中文");
     let canonical = fs::canonicalize(&root).expect("canonical fixture root");
-    let value = json_of(mount_project(&json!({"path": canonical})));
+    let value = json_of(mount_project(&json!({"format": "json", "path": canonical})));
     assert_eq!(value["mounted"], true);
     assert_eq!(value["files"], 6, "fixture has 6 source files");
     assert!(value["symbols"].as_u64().unwrap() >= 10);
@@ -63,20 +63,20 @@ fn mount_returns_real_stats_json() {
     assert_eq!(value["skipped_unsupported"], 2, "Cargo.toml and README.md");
     assert!(value["elapsed_ms"].is_u64());
 
-    let list_value = json_of(list_mounted_projects(&Value::Null));
+    let list_value = json_of(list_mounted_projects(&json!({"format": "json"})));
     let projects = list_value["projects"].as_array().unwrap();
     assert!(projects.iter().any(|p| p["path"]
         .as_str()
         .unwrap_or("")
         .contains("mcp-test-mount-json")));
 
-    let sync_value = json_of(sync_project(&json!({"path": root})));
+    let sync_value = json_of(sync_project(&json!({"format": "json", "path": root})));
     assert_eq!(sync_value["added"], 0);
     assert_eq!(sync_value["modified"], 0);
     assert_eq!(sync_value["removed"], 0);
     assert_eq!(sync_value["files"], 6);
 
-    let un_value = json_of(unmount_project(&json!({"path": root})));
+    let un_value = json_of(unmount_project(&json!({"format": "json", "path": root})));
     assert_eq!(un_value["unmounted"], true);
     assert_eq!(un_value["killed_lsps"], 0);
 }
@@ -84,7 +84,9 @@ fn mount_returns_real_stats_json() {
 #[test]
 fn mount_echoes_enable_vector() {
     let root = temp_project("vector-flag");
-    let value = json_of(mount_project(&json!({"path": root, "enable_vector": true})));
+    let value = json_of(mount_project(
+        &json!({"format": "json", "path": root, "enable_vector": true}),
+    ));
     assert_eq!(value["vector"], true);
     unmount_project(&json!({"path": root})).expect("unmount");
 }
@@ -129,7 +131,7 @@ fn analysis_tools_require_mount() {
 fn unmount_twice_reports_not_mounted() {
     let root = temp_project("unmount-twice");
     mount_project(&json!({"path": root})).expect("mount");
-    let value = json_of(unmount_project(&json!({"path": root})));
+    let value = json_of(unmount_project(&json!({"format": "json", "path": root})));
     assert_eq!(value["unmounted"], true);
     let err = unmount_project(&json!({"path": root})).expect_err("double unmount");
     assert!(err.message.contains("not mounted"), "{:?}", err.message);
@@ -165,8 +167,7 @@ fn search_code_modes_dispatch() {
     let root = temp_project("search");
     mount_project(&json!({"path": root})).expect("mount");
 
-    let value = json_of(search_code(&json!({
-        "path": root,
+    let value = json_of(search_code(&json!({"format": "json", "path": root,
         "query": "unicorn_marker_fn",
         "mode": "keyword",
         "top_k": 8
@@ -200,7 +201,7 @@ fn search_code_modes_dispatch() {
     // 缺省参数：本挂载未启用 vector，降级为 keyword 且 mode 如实
     // 回显实际执行模式（F2.5 降级可见性契约）。
     let value = json_of(search_code(
-        &json!({"path": root, "query": "helper_spinner"}),
+        &json!({"format": "json", "path": root, "query": "helper_spinner"}),
     ));
     assert_eq!(value["mode"], "keyword");
     assert!(
@@ -220,7 +221,7 @@ fn search_code_modes_dispatch() {
     // vector 模式未就绪：降级 keyword 成功返回并回显 keyword
     // （store 层 "vector search disabled" 错误保留给直接调用方）。
     let value = json_of(search_code(
-        &json!({"path": root, "query": "spin", "mode": "vector"}),
+        &json!({"format": "json", "path": root, "query": "spin", "mode": "vector"}),
     ));
     assert_eq!(value["mode"], "keyword");
     // query "spin" 的独立词命中在 src/main.rs（let spin = ...）。
@@ -371,47 +372,12 @@ file	symbol	start	end	score	snippet
     );
 }
 
-/// outline_to_text：头行计数 + tab 分列 + sig 内 tab 防御 + 空符号文件。
-#[test]
-fn outline_to_text_rows_and_tab_guard() {
-    let entries = vec![
-        OutlineEntry {
-            kind: "fn".into(),
-            name: "f".into(),
-            start_line: 1,
-            end_line: 2,
-            sig: "fn f(a: &str)".into(),
-        },
-        OutlineEntry {
-            kind: "struct".into(),
-            name: "S".into(),
-            start_line: 4,
-            end_line: 5,
-            sig: "struct S {	a: u32,	}".into(),
-        },
-    ];
-    let out = outline_to_text("src/a.rs", &entries);
-    let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines[0], "# outline file=src/a.rs symbols=2");
-    assert_eq!(lines[1], "fn	f	1	2	fn f(a: &str)");
-    // sig 内 tab 替换空格（最后一列防错位）。
-    assert_eq!(lines[2], "struct	S	4	5	struct S { a: u32, }");
-
-    // 空符号文件：头行 symbols=0 后无数据行（真实标记空）。
-    let empty = outline_to_text("src/empty.rs", &[]);
-    assert_eq!(
-        empty,
-        "# outline file=src/empty.rs symbols=0
-"
-    );
-}
-
 /// MountReport 新固定字段端到端恒出现：skipped 三类计数 +
 /// vector_degraded 零值态（mount 未请求向量）。
 #[test]
 fn mount_report_hardcoded_fields_end_to_end() {
     let root = temp_project("hardcode");
-    let value = json_of(mount_project(&json!({"path": root})));
+    let value = json_of(mount_project(&json!({"format": "json", "path": root})));
     for key in [
         "skipped_binary",
         "skipped_oversize",
@@ -429,7 +395,7 @@ fn mount_report_hardcoded_fields_end_to_end() {
     assert_eq!(value["skipped_binary"], 0, "fixture 无二进制");
 
     // list 的 ProjectInfo 同步携带降级态字段。
-    let list_value = json_of(list_mounted_projects(&Value::Null));
+    let list_value = json_of(list_mounted_projects(&json!({"format": "json"})));
     let projects = list_value["projects"].as_array().unwrap();
     let mine = projects
         .iter()
@@ -457,7 +423,7 @@ fn mount_report_counts_three_skip_kinds() {
     nul.push(0u8);
     fs::write(root.join("nul.rs"), &nul).expect("write nul");
 
-    let value = json_of(mount_project(&json!({"path": root})));
+    let value = json_of(mount_project(&json!({"format": "json", "path": root})));
     assert_eq!(value["skipped_binary"], 1, "nul.rs counted: {value}");
     assert_eq!(value["skipped_oversize"], 1, "big.rs counted: {value}");
     // fixture 自带 Cargo.toml + README.md + 本用例的 notes.md = 3。
@@ -483,10 +449,10 @@ fn outline_and_read_symbol_json() {
         "header: {header}"
     );
     assert!(
-        text.contains("fn\tunicorn_marker_fn\t"),
+        text.contains("unicorn_marker_fn"),
         "unicorn row present: {text}"
     );
-    assert!(text.contains("struct\tGoldConfig\t"), "GoldConfig row");
+    assert!(text.contains("GoldConfig"), "GoldConfig row");
     // 数据行数与头行 symbols 计数一致。
     let declared: usize = header
         .rsplit('=')
@@ -497,8 +463,7 @@ fn outline_and_read_symbol_json() {
     let rows = text.lines().filter(|l| !l.starts_with('#')).count();
     assert_eq!(rows, declared, "rows match header count: {text}");
 
-    let value = json_of(read_symbol(&json!({
-        "path": root,
+    let value = json_of(read_symbol(&json!({"format": "json", "path": root,
         "file_path": "src/lib.rs",
         "symbol_name": "unicorn_marker_fn"
     })));
@@ -576,7 +541,7 @@ async fn lsp_error_paths_require_mount_lang_and_server() {
     );
     assert!(err.message.contains("typescript"), "{:?}", err.message);
     // 全程未拉起任何子进程：unmount 应报 killed_lsps=0。
-    let value = json_of(unmount_project(&json!({ "path": root })));
+    let value = json_of(unmount_project(&json!({"format": "json", "path": root })));
     assert_eq!(value["killed_lsps"], 0, "no server spawned");
 }
 
@@ -603,6 +568,7 @@ async fn lsp_dispatch_smoke_definition_on_real_rust_analyzer() {
         &json!({
             "path": root,
             "file_path": "src/main.rs",
+            "format": "json",
             "line": call_line,
             "character": call_char,
         }),
@@ -618,6 +584,6 @@ async fn lsp_dispatch_smoke_definition_on_real_rust_analyzer() {
         "jumps to src/lib.rs:27, got {locations:?}"
     );
 
-    let un = json_of(unmount_project(&json!({ "path": root })));
+    let un = json_of(unmount_project(&json!({"format": "json", "path": root })));
     assert_eq!(un["killed_lsps"], 1, "one rust-analyzer reaped");
 }

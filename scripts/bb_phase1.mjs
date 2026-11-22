@@ -45,7 +45,8 @@ async function main() {
 
   await runCase('F1.2', '挂载前 tools/list 已列出全部 11 个工具', async () => {
     const res = await c.call('tools/list');
-    const names = (res.result?.tools ?? []).map(t => t.name).sort();
+    const names = res.result.tools.map(t => t.name).sort();
+    expect(res.result.tools.every(t => t.inputSchema.properties.format.default === 'compact'), 'compact is default');
     expectEq(names.length, 11, 'tool count');
     for (const want of ['mount_project', 'unmount_project', 'list_mounted_projects', 'sync_project',
       'get_repo_map', 'search_code', 'get_file_outline', 'read_symbol',
@@ -61,6 +62,8 @@ async function main() {
     expect(r.json.files > 5, 'files > 5, got ' + r.json.files);
     expect(r.json.symbols > 8, 'symbols > 8, got ' + r.json.symbols);
     expect(typeof r.json.elapsed_ms === 'number', 'elapsed_ms present');
+    const compact = await c.toolAs('list_mounted_projects', {});
+    expect(!compact.isError && compact.text.includes(work), 'default project TSV: ' + compact.text);
   });
 
   await runCase('F1.8', '挂载后直接 read_symbol 返回完整实现体', async () => {
@@ -86,19 +89,15 @@ async function main() {
     expect(full.text.includes('helper_spinner'), 'high-centrality helper_spinner ranked in');
     const tiny = await c.tool('get_repo_map', { path: work, token_budget: 80 });
     expect(!tiny.isError, 'tiny repo_map ok');
-    expect(tiny.text.includes('truncated'), 'budget truncation marker: ' + tiny.text.slice(-120));
+    expect(tiny.json?.truncated > 0 && tiny.json.shown + tiny.json.truncated === tiny.json.symbols, 'budget truncation marker: ' + tiny.text.slice(-120));
   });
 
   await runCase('F1.6', 'get_file_outline 符号与行号', async () => {
     const r = await c.tool('get_file_outline', { path: work, file_path: 'src/lib.rs' });
     expect(!r.isError, 'outline ok: ' + r.text);
-    // 紧凑行文本：首行元信息 + tab 分列数据行。
-    expect(r.text.startsWith('# outline file=src/lib.rs symbols='), 'header: ' + r.text.split('\n')[0]);
-    expect(r.text.includes('fn	unicorn_marker_fn	'), 'unicorn_marker_fn row: ' + r.text);
-    expect(r.text.includes('struct	GoldConfig	'), 'GoldConfig row: ' + r.text);
-    const declared = Number(r.text.split('\n')[0].split('=')[2]);
-    const rows = r.text.split('\n').filter(l => l && !l.startsWith('#')).length;
-    expectEq(rows, declared, 'rows match header symbols count');
+    expectEq(r.json.file, 'src/lib.rs', 'outline file');
+    expect(r.json.symbols.some(s => s.kind === 'fn' && s.name === 'unicorn_marker_fn' && s.start_line === 27), r.text);
+    expect(r.json.symbols.some(s => s.kind === 'struct' && s.name === 'GoldConfig'), r.text);
   });
 
   await runCase('F1.7', 'search_code keyword 唯一函数命中', async () => {
@@ -254,10 +253,8 @@ async function main() {
     await c5.tool('mount_project', { path: work });
     const r = await c5.tool('get_repo_map', { path: work, focus_files: ['src/utils.rs'], token_budget: 3000 });
     expect(!r.isError, 'focused repo_map ok: ' + r.text);
-    const lines = r.text.split('\n').filter(l => l.trim() && !l.includes('truncated'));
-    expect(lines.length > 0, 'non-empty map');
-    const utilsPos = lines.findIndex(l => l.startsWith('src/utils.rs'));
-    expect(utilsPos >= 0 && utilsPos < 5, `src/utils.rs promoted to top-5 (pos=${utilsPos})`);
+    const focus = r.json?.files.find(f => f.path === 'src/utils.rs');
+    expect(focus?.symbols[0].rank <= 5, 'src/utils.rs promoted to top-5: ' + r.text);
     await c5.kill('SIGTERM');
   });
 

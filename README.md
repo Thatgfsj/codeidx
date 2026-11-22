@@ -125,8 +125,8 @@ codeidx-mcp 走 stdio 上的 JSON-RPC 2.0，可被任意 MCP 客户端（AI Agen
 | `list_mounted_projects` | — | 列出当前已挂载的项目及其索引规模 |
 | `sync_project` | `path` | 增量同步，反映文件系统的增 / 改 / 删；`failed`/`failed_files`（上限 20）真实列出重建失败文件 |
 | `get_repo_map` | `path`；`focus_files?`；`token_budget?`（默认 3000） | PageRank 加权骨架图；首行元信息头 `# repo_map symbols/shown/budget/used_tokens/truncated`，未索引聚焦文件逐个标记 `# focus_files ignored: <path>` |
-| `search_code` | `path`；`query`；`mode?`（hybrid/keyword/vector，默认 hybrid）；`top_k?`（默认 8，上限 50）；`token_budget?`（默认 1200，200..8000） | 三模式检索；`results` 为紧凑行文本（元信息行 + 列名行 + 数据行），`truncated_hits` 如实计数预算截断，`degraded`/`total_candidates` 元数据保留 |
-| `get_file_outline` | `path`；`file_path` | 紧凑行文本大纲：首行 `# outline file=<rel> symbols=<n>`，数据行 `kind<TAB>name<TAB>start<TAB>end<TAB>sig`（无函数体） |
+| `search_code` | `path`；`query`；`mode?`；`top_k?`；`token_budget?` | 按文件分组的代码命中，带降级与截断数据 |
+| `get_file_outline` | `path`；`file_path` | 单个文件的符号、行范围与签名（无函数体） |
 | `read_symbol` | `path`；`file_path`；`symbol_name` | 指定符号的完整实现代码 |
 | `lsp_definition` | `path`；`file_path`；`line`；`character` | 跳转到指定位置的符号定义 |
 | `lsp_references` | `path`；`file_path`；`line`；`character` | 列出指定位置符号的全部引用 |
@@ -141,46 +141,17 @@ codeidx-mcp 走 stdio 上的 JSON-RPC 2.0，可被任意 MCP 客户端（AI Agen
 | `CODEIDX_EMBED_MODEL` | `bgesmallzhv15` | 向量模型，支持 `bgelargezhv15`（1024 维，真实推理与资源占用待验收）。变更后需重启进程。 |
 | `RUST_LOG` | `info` | tracing 日志过滤（如 `codeidx=debug`）；日志全部写 stderr，绝不污染 stdout |
 
-### 产物格式哲学：为 token 而生
+### MCP 结果格式
 
-MCP 产物是给 AI 读的，每一字节都计入上下文预算。codeidx 的产物格式遵循三条第一性原则：**键名不逐行重复**（紧凑行替代 JSON 数组，省掉每行重复的结构税）、**元信息进首行**（一行 `#` 头报告规模与预算状态）、**预算双闸硬截断且如实计数**（截断了多少条，AI 自己知道）。实测：16 符号大纲 2374 → 1546 chars，省 35%（见[验收记录](docs/acceptance-log.md)「产物紧凑化」条）。
+所有工具都接受可选的 `format`。默认 `compact` 返回纯文本正文，`json` 返回 JSON 正文，`md` 把紧凑正文包在 Markdown 代码围栏内。外层仍使用 MCP JSON-RPC，文本位于 `content[0].text`。
 
-**`get_file_outline` 紧凑行样例**（行号与签名为 `tests/fixtures/sample-project/src/lib.rs` 真实内容，黑盒 F1.6 断言锚点）：
+- RepoMap 每个文件只写一次路径，下一行起以一个空格缩进列出符号。文件大纲逐行给出行范围、符号类型和签名或名称。
+- 搜索用 `@` 加 JSON 字符串标记路径，数据行用 Tab 分隔全局排名、行范围、两位小数分数、符号和片段。后两列使用 JSON 字符串转义，无符号时为 `null`。排名保留引擎顺序信息，片段保留收到的缩进和空行。
+- LSP 定义和引用逐行给出 `path:line:character`。项目状态使用键值行或 TSV，布尔状态用 `0/1`。
+- RepoMap 和搜索的预算按数据区 UTF-8 字节数除以四向上取整，包括分组路径，元信息另计。实际分词数依模型而异。
 
-```text
-# outline file=src/lib.rs symbols=<n>
-fn	unicorn_marker_fn	27	32	pub fn unicorn_marker_fn(cfg: &GoldConfig) -> String
-struct	GoldConfig	9	14	pub struct GoldConfig
-fn	forge	18	23	pub fn forge(label: &str) -> GoldConfig
-fn	forge_config	35	37	pub fn forge_config(label: &str) -> GoldConfig
-```
+已有脚本读取项目报告、LSP 或搜索的 JSON 时，请显式传 `format: "json"`。搜索 JSON 保留 `results` TSV 字符串。RepoMap 和大纲的 JSON 格式提供 `files` 和 `symbols` 数据。
 
-**`search_code` 紧凑行样例**（数据行为黑盒 F1.7 断言锚点：top 命中 `src/lib.rs<TAB>` 前缀、start_line 有效）：
-
-```text
-# search hits=<shown> truncated_hits=<k> tokens≈<t>/budget=1200
-file	symbol	start	end	score	snippet
-src/lib.rs	unicorn_marker_fn	27	32	0.xxxx	pub fn unicorn_marker_fn(cfg: &GoldConfig) -> String
-```
-
-`<shown>/<k>/<t>` 由服务端填充：`truncated_hits` 非 0 即"还有命中没装下"，调大 `token_budget` 重取即可；`score` 恒为四位小数；snippet ≤ 3 行、内换行转义 `\n`；symbol 缺省 `-`。
-
-**`get_repo_map` 数据行样例**（同 fixture 真实锚点，`<rel_path>:<line> <kind> <name>`，PageRank 权重降序，超预算附尾行）：
-
-```text
-src/lib.rs:27 fn unicorn_marker_fn
-src/lib.rs:9 struct GoldConfig
-...
-(truncated, budget=<n>)
-```
-
-**预算双闸**：`search_code` 同时有 `top_k` 条数闸（默认 8、硬 clamp 8..50）与 `token_budget` 总量闸（默认 1200、硬 clamp 200..8000），命中行文本逐数据行累计 tokens≈字符/4，超预算即截断并在元信息行如实计数——与 `get_repo_map` 的 budget 语义对齐。
-
-**恒出现字段（AI 可判读性硬化）**：mount/sync/search/list 等 JSON 壳的硬化字段**恒出现**——0 / false / 空串 / 空数组也照常序列化，消费方按固定字段集直接判读，无需缺省键探测：
-
-- `mount_project` 的 `skipped_binary/skipped_oversize/skipped_unsupported` 三计数解释"为何不是全量"；`vector_degraded/vector_degraded_reason` 如实报告降级
-- `search_code` 的 `degraded/degraded_reason`（vector 未启用 / `CODEIDX_DISABLE_VECTOR=1` / 模型加载失败三种之一）与 `total_candidates`：空结果配 `total_candidates>0` 即"无命中"而非"无索引"
-- `sync_project` 的 `failed/failed_files`（上限 20）真实列出重建失败文件，`truncated` 标记是否截断清单
 
 ## 给人的表面：codeidx-tui
 
