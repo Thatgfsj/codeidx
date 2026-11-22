@@ -1,4 +1,4 @@
-// Usage: node scripts/bb_callflow.mjs <codeidx-mcp>
+// Usage: node scripts/bb_callflow.mjs <codeidx-mcp> [--lsp]
 import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -83,6 +83,34 @@ try {
   const after = (await candidates()).filter(n => n.location.symbol === 'bb_ambiguous');
   expectEq(after.length, 1, 'removed definition drops stale edge');
   expectEq(after[0].location.file, 'src/two.rs', 'surviving definition');
+  write('lib.rs', `pub mod one;
+pub mod two;
+pub fn bb_resolve() { one::bb_target(); }
+`);
+  write('one.rs', 'pub fn bb_target() {}');
+  write('two.rs', 'pub fn bb_target() {}');
+  await sync();
+  const staticResult = await trace({ symbol: 'bb_resolve' });
+  expect(staticResult.roots[0].children.some(n => n.candidates === 2), 'ambiguous Rust fixture');
+  if (process.argv.includes('--lsp')) {
+    const live = await trace({ symbol: 'bb_resolve', refine_lsp: true });
+    expect(live.lsp_refined > 0, 'native rust-analyzer refined a call: ' + JSON.stringify(live));
+    const verified = live.roots[0].children.filter(n => n.location.symbol === 'bb_target');
+    expectEq(verified.length, 1, 'LSP resolves to one target');
+    expectEq(verified[0].location.file, 'src/one.rs', 'verified definition');
+    expectEq(verified[0].confidence, 'lsp', 'verified confidence');
+  }
+  const offline = new McpStdioClient(resolve(process.argv[2]), { env: { PATH: path, Path: path } });
+  try {
+    await offline.initialize();
+    expect(!(await offline.tool('mount_project', { path, auto_sync: false })).isError, 'offline mount');
+    const r = await offline.tool('trace_calls', { path, symbol: 'bb_resolve' });
+    expect(!r.isError && r.json.lsp_degraded && r.json.lsp_refined === 0, 'missing LSP degrades: ' + r.text);
+    expect(r.json.roots[0].children.some(n => n.candidates === 2), 'fallback retains static candidates');
+    expectEq(offline.stdoutPollution.length, 0, 'offline stdout only JSON-RPC');
+  } finally {
+    await offline.kill();
+  }
   expectEq(c.stdoutPollution.length, 0, 'stdout only JSON-RPC');
   console.log('PASS discovery, directions, continuation, formats, cycles, budgets and cross-file sync');
 } finally {
