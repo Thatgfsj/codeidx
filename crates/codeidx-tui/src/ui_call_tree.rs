@@ -79,7 +79,10 @@ pub(super) fn draw(f: &mut Frame, area: Rect, tree: &CallTree) {
                 Some(TraceConfidence::Ambiguous) => {
                     marks.push_str(&format!(" ?{}", node.candidates))
                 }
-                _ => {}
+                Some(TraceConfidence::Unique | TraceConfidence::SameFile) => {
+                    marks.push_str(" 静态")
+                }
+                None => {}
             }
             if node.cycle {
                 marks.push_str(" ↻环");
