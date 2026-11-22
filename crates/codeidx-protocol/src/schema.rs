@@ -24,7 +24,10 @@ impl ToolSpec {
         let mut input_schema: serde_json::Value = serde_json::from_str(self.schema_json)
             .expect("tool schema is valid JSON (guarded by unit tests)");
         input_schema["properties"]["format"] = serde_json::json!({
-            "type": "string", "enum": ["compact", "json", "md"], "default": "compact"
+            "type": "string",
+            "enum": ["compact", "json", "md"],
+            "default": "compact",
+            "description": "默认省略此参数，仅返回 compact 紧凑正文。仅在用户明确要求 JSON 时传 json，明确要求以 Markdown 查看时传 md（用代码块展示紧凑正文）。"
         });
         ToolDescriptor {
             name: self.name.to_owned(),
