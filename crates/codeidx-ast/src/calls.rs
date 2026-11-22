@@ -1,8 +1,23 @@
 //! Syntax-backed calls and callback argument candidates.
 
+use std::collections::HashSet;
+
 use tree_sitter::Node;
 
-use crate::Lang;
+use crate::{call_targets, Lang, SymbolDef, SymbolKind};
+
+/// Static evidence for choosing callable definitions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CallTarget {
+    /// A simple unqualified function name.
+    Bare,
+    /// A method with a syntactically known owner name.
+    Owner(String),
+    /// A module-qualified free function.
+    Module(String),
+    /// No adequate candidate-selection evidence.
+    Unresolved,
+}
 
 /// Why a source position participates in the graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,26 +41,61 @@ pub struct CallSite {
     pub character: u32,
     /// Syntactic evidence for this site.
     pub kind: CallSiteKind,
+    /// Candidate-selection evidence; independent of the indexed source position.
+    pub target: CallTarget,
 }
 
-pub(crate) fn extract_calls(lang: Lang, root: Node<'_>, text: &str) -> Vec<CallSite> {
+pub(crate) fn extract_calls(
+    lang: Lang,
+    root: Node<'_>,
+    text: &str,
+    symbols: &[SymbolDef],
+) -> Vec<CallSite> {
     let mut calls = Vec::new();
     if lang == Lang::Html {
         return calls;
     }
+    let types: HashSet<_> = symbols
+        .iter()
+        .filter(|s| {
+            matches!(
+                s.kind,
+                SymbolKind::Struct | SymbolKind::Class | SymbolKind::Enum | SymbolKind::Type
+            )
+        })
+        .map(|s| s.name.as_str())
+        .collect();
     let mut cursor = root.walk();
     loop {
         let node = cursor.node();
-        if lang == Lang::Rust && macro_argument_reference(node) {
-            calls.push(site(node, Some(node), text, CallSiteKind::Reference));
+        if lang == Lang::Rust
+            && macro_argument_reference(node)
+            && call_targets::bare_macro_token(node)
+        {
+            calls.push(site(
+                node,
+                Some(node),
+                text,
+                CallSiteKind::Reference,
+                CallTarget::Bare,
+            ));
         }
         if let Some(target) = invocation(lang, node) {
             let token = name_node(target);
+            let mut evidence = call_targets::classify(lang, node, target, text);
+            if evidence == CallTarget::Bare
+                && token
+                    .and_then(|n| text.get(n.byte_range()))
+                    .is_some_and(|name| types.contains(name))
+            {
+                evidence = CallTarget::Unresolved;
+            }
             calls.push(site(
                 token.unwrap_or(target),
                 token,
                 text,
                 CallSiteKind::Call,
+                evidence,
             ));
             if let Some(args) = field(node, &["arguments"]).or_else(|| {
                 let mut walk = node.walk();
@@ -64,8 +114,19 @@ pub(crate) fn extract_calls(lang: Lang, root: Node<'_>, text: &str) -> Vec<CallS
                     } else {
                         Some(arg)
                     };
-                    if let Some(token) = value.and_then(name_node) {
-                        calls.push(site(token, Some(token), text, CallSiteKind::Callback));
+                    if let Some((token, evidence)) = value.and_then(|value| {
+                        Some((
+                            name_node(value)?,
+                            call_targets::callback(lang, value, text)?,
+                        ))
+                    }) {
+                        calls.push(site(
+                            token,
+                            Some(token),
+                            text,
+                            CallSiteKind::Callback,
+                            evidence,
+                        ));
                     }
                 }
             }
@@ -115,13 +176,13 @@ fn macro_argument_reference(node: Node<'_>) -> bool {
     false
 }
 
-fn field<'a>(node: Node<'a>, names: &[&str]) -> Option<Node<'a>> {
+pub(crate) fn field<'a>(node: Node<'a>, names: &[&str]) -> Option<Node<'a>> {
     names
         .iter()
         .find_map(|name| node.child_by_field_name(*name))
 }
 
-fn first_named(node: Node<'_>) -> Option<Node<'_>> {
+pub(crate) fn first_named(node: Node<'_>) -> Option<Node<'_>> {
     let mut cursor = node.walk();
     let found = node
         .named_children(&mut cursor)
@@ -195,7 +256,13 @@ fn name_node(mut node: Node<'_>) -> Option<Node<'_>> {
     None
 }
 
-fn site(position: Node<'_>, name: Option<Node<'_>>, text: &str, kind: CallSiteKind) -> CallSite {
+fn site(
+    position: Node<'_>,
+    name: Option<Node<'_>>,
+    text: &str,
+    kind: CallSiteKind,
+    target: CallTarget,
+) -> CallSite {
     let start = position.start_position();
     let byte = position.start_byte();
     let prefix = text
@@ -209,5 +276,6 @@ fn site(position: Node<'_>, name: Option<Node<'_>>, text: &str, kind: CallSiteKi
         line: start.row as u32 + 1,
         character: prefix.encode_utf16().count() as u32,
         kind,
+        target,
     }
 }

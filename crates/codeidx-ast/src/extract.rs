@@ -43,7 +43,7 @@ pub(crate) fn extract(
     ex.walk_defs(tree.root_node());
     ex.walk_refs(tree.root_node());
     let calls = if trace {
-        crate::calls::extract_calls(lang, tree.root_node(), text)
+        crate::calls::extract_calls(lang, tree.root_node(), text, &ex.symbols)
     } else {
         Vec::new()
     };

@@ -37,6 +37,8 @@ CREATE TABLE call_sites (
     line INTEGER NOT NULL,
     character INTEGER,
     kind TEXT NOT NULL,
+    target_kind TEXT NOT NULL,
+    qualifier TEXT,
     candidate_count INTEGER NOT NULL DEFAULT 0,
     confidence TEXT NOT NULL DEFAULT 'unresolved'
 );

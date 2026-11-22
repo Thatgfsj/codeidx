@@ -10,6 +10,7 @@
 
 pub mod types;
 
+mod call_targets;
 mod calls;
 mod chunk;
 mod extract;
@@ -18,7 +19,7 @@ mod lang;
 mod pagerank;
 mod repomap;
 
-pub use calls::{CallSite, CallSiteKind};
+pub use calls::{CallSite, CallSiteKind, CallTarget};
 pub use graph::enclosing_symbol;
 pub use lang::detect_lang;
 pub use pagerank::{pagerank, RepoNode};
