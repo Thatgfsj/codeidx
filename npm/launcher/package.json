@@ -1,5 +1,5 @@
 {
-  "name": "codeidx",
+  "name": "@thatgfsj/codeidx",
   "version": "0.1.0",
   "description": "Native code indexing MCP server and terminal interface",
   "license": "GPL-3.0-or-later",

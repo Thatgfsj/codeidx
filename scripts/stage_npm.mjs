@@ -25,7 +25,7 @@ for (const name of ['codeidx-mcp', 'codeidx-tui']) {
 copyFileSync(join(root, 'LICENSE'), join(native, 'LICENSE'));
 writeFileSync(join(native, 'README.md'), [
   '# Codeidx native binaries', '',
-  'Install the [codeidx launcher](https://www.npmjs.com/package/codeidx) to use these executables.',
+  'Install the [codeidx launcher](https://www.npmjs.com/package/@thatgfsj/codeidx) to use these executables.',
   'Source and build instructions: https://github.com/Thatgfsj/codeidx', '',
 ].join('\n'));
 writeFileSync(join(native, 'package.json'), JSON.stringify({
