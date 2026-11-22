@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+<title id="title">Codeidx</title><desc id="desc">A local repository index with MCP and terminal interfaces.</desc>
+<defs><pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse"><path d="M30 0H0V30" fill="none" stroke="#284454" opacity=".4"/></pattern></defs>
+<rect x="1" y="1" width="1198" height="358" rx="23" fill="#101925" stroke="#284454" stroke-width="2"/>
+<rect x="670" y="28" width="499" height="304" rx="18" fill="url(#grid)"/>
+<g font-family="system-ui, sans-serif"><text x="72" y="92" fill="#65eac5" font-size="24" font-weight="700" letter-spacing="4">LOCAL CODE INDEX</text>
+<text x="66" y="211" fill="#edf7fa" font-size="111" font-weight="800" letter-spacing="-7">codeidx</text>
+<text x="72" y="279" fill="#a5bbc8" font-size="32" font-weight="550">MCP for agents · Terminal UI for developers</text></g>
+<g fill="none" stroke="#65eac5" stroke-width="3"><path d="M755 180H824M955 180H1000V117H1040M1000 180V243H1040"/><circle cx="749" cy="180" r="7" fill="#65eac5"/>
+<path d="m890 111 71 39v60l-71 39-71-39v-60z" fill="#101925"/><path d="m819 150 71 39 71-39m-71 39v60"/><path d="m850 134 71 39v59" opacity=".5"/>
+<rect x="1040" y="89" width="101" height="56" rx="10" fill="#101925"/><rect x="1040" y="215" width="101" height="56" rx="10" fill="#101925"/></g>
+<g fill="#edf7fa" text-anchor="middle" font-family="monospace" font-size="22" font-weight="700"><text x="1090" y="125">MCP</text><text x="1090" y="251">TUI</text></g>
+</svg>

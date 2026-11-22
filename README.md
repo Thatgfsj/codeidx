@@ -1,234 +1,143 @@
-# codeidx
+<a name="readme-top"></a>
 
-全局按需挂载的代码索引引擎 —— 单一 Rust 原生二进制，零 Python/Node 运行时依赖。
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/banner-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset=".github/assets/banner-light.svg">
+    <img src=".github/assets/banner-light.svg" alt="Codeidx 本地代码索引，提供 MCP 和终端界面" width="860">
+  </picture>
+</p>
 
-## 双表面：MCP 给 AI，前端给人
+<h1 align="center">codeidx</h1>
 
-**MCP 是给 AI 用的，前端是给人用的。** codeidx 用同一个引擎同时服务两类用户：
+<p align="center"><strong>给 AI 的代码索引 MCP，给开发者的原生终端界面。</strong></p>
 
-| 表面 | 用户 | 形态 | 状态 |
-|---|---|---|---|
-| `codeidx-mcp` | AI（Agent / IDE） | stdio MCP 服务：11 个工具、紧凑行产物、token 预算双闸 | 已交付，黑盒验收全绿 |
-| `codeidx-tui` | 人 | 原生终端前端 | 已交付 |
+<p align="center">
+  <a href="#quick-start">快速开始</a> · <a href="#mcp">接入 MCP</a> · <a href="#terminal">终端界面</a> · <a href="#benchmark">实测数据</a> · <a href="#languages">语言支持</a>
+</p>
 
-- **同一引擎**：AST 骨架 + FTS5/向量混合检索 + LSP 桥；纯内存、按需挂载、`unmount_project` 即释放。
-- **命名**：仓库为 **codeidx**；`codeidx-mcp` 是 workspace 内 MCP 接入层 crate 的准确命名（与`codeidx-tui` 对应）。
+## 在本地查代码
 
-## 核心特性
+Codeidx 用 Rust 为项目建立索引。你可以找出跨文件的相关符号、读取实现片段，或借助本机语言服务器查询定义和引用。MCP 服务和终端界面使用同一套引擎，各自维护索引。
 
-- **全局轻量常驻**：启动时零扫描、零模型、零 LSP，空闲实测 VmRSS 10.3MB（见[性能实测](#性能与资源实测)）
-- **按需挂载**：仅当 AI 调用 `mount_project(path)` 时才在内存中初始化索引
-- **纯内存态**：AST 符号表 / 依赖图 / FTS5 / 向量索引全部在 SQLite `:memory:`，不在项目目录残留缓存
-- **三层能力**：
-  1. AST 骨架（Tree-sitter + PageRank RepoMap）。PHP（`.php`）提取常见声明与静态可识别的引用。HTML（`.html`、`.htm`）按元素的显式 `id` 建立结构索引。
-  2. 混合检索（FTS5 BM25 + sqlite-vec 向量 + RRF 融合，fastembed 懒加载可选）
-  3. 按需 LSP 桥（rust-analyzer 等，idle timeout 自动回收）
-- **即时释放**：`unmount_project` 销毁内存库并 kill 关联 LSP；SIGINT/SIGTERM 优雅清理
+| 能力 | 用途 |
+|---|---|
+| **代码结构** | 用 RepoMap 看仓库里的关键符号，用文件大纲查看声明和行号 |
+| **关键词和语义搜索** | 挂载后即可按关键词搜索。启用向量索引后可做语义搜索或混合排序 |
+| **定义和引用** | 查询源码位置时按需启动本机语言服务器 |
+| **按需索引** | 挂载时在内存中建索引，默认监听改动，卸载时释放项目索引 |
 
-## 文档
+<a name="quick-start"></a>
 
-- 架构契约：[ARCHITECTURE.md](ARCHITECTURE.md)
-- 验收线路：[docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)
-- 验收记录：[docs/acceptance-log.md](docs/acceptance-log.md)
+## 快速开始
 
-## Quick Start
+需要 [Rust stable](https://rustup.rs/) 与本机 C 编译、链接工具链。源码构建可能下载 ONNX Runtime。Windows 使用 Rust MSVC 工具链、C++ Build Tools 和 Windows SDK 10.0.19041 或更新版本。
 
-前置：Rust 稳定版工具链（[rustup](https://rustup.rs/)）。
-
-```bash
+```sh
 git clone https://github.com/Thatgfsj/codeidx.git
 cd codeidx
-cargo build --release --bin codeidx-mcp
+cargo build --locked --release --bin codeidx-mcp --bin codeidx-tui
 ```
 
-产物为单文件原生二进制 `target/release/codeidx-mcp`：
+可执行文件位于 `target/release/`，Windows 文件带 `.exe` 后缀。MCP 和终端界面运行时无需 Python 或 Node.js。语言服务器按需单独安装。
 
-- 运行期零 Python / Node.js 依赖；SQLite（bundled，FTS5 内嵌编译）与 sqlite-vec 均静态链接，不依赖系统库。
-- 可选向量检索的 embedding 模型（fastembed，BAAI/bge-small-zh-v1.5）仅在首次以 `enable_vector=true` 挂载时懒加载；缓存目录 `~/.cache/codeidx-mcp`（约 91MB），缓存命中免联网，首次无缓存需下载 90.5MB。
+<a name="mcp"></a>
 
-stdio 冒烟（一行一条 JSON，肉眼即可验证 stdout 纯净性）：
+## 接入 MCP
 
-```bash
-target/release/codeidx-mcp <<'EOF'
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}
-{"jsonrpc":"2.0","method":"notifications/initialized"}
-{"jsonrpc":"2.0","id":2,"method":"tools/list"}
-EOF
-```
-
-`tools/list` 应返回 11 个工具。
-
-### 跑测试与黑盒
-
-通用门（与 CI 同一套，见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) §0）：
-
-```bash
-cargo fmt --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-```
-
-黑盒验收（stdio 驱动，逐行解析 stdout 并断言零污染）：
-
-```bash
-node scripts/bb_phase1.mjs ./target/release/codeidx-mcp
-node scripts/bb_phase2.mjs ./target/release/codeidx-mcp  # 前提：模型缓存 ~/.cache/codeidx-mcp，首跑触发下载
-node scripts/bb_phase3.mjs ./target/release/codeidx-mcp
-```
-
-## 给 AI 的表面：stdio MCP 服务
-
-### MCP 客户端接入
-
-codeidx-mcp 走 stdio 上的 JSON-RPC 2.0，可被任意 MCP 客户端（AI Agent / IDE）作为 stdio server 挂起：
-
-- **一行一条 JSON 消息**（不使用 LSP 式 `Content-Length` 头）
-- **stdout 仅输出 JSON-RPC 协议字节**；一切日志 / tracing 走 stderr，客户端可放心把 stdout 逐行 `JSON.parse`
-- 工具执行失败不走协议层错误：`tools/call` 返回 `result.isError = true` 与 `content[0].text = "error: <原因>"`（`-32601` 这类仅保留给 method not found 等协议级错误）
-- 握手协议版本：`initialize` 宣告 `protocolVersion` = `2024-11-05`
-
-通用 JSON-RPC over stdio 客户端配置片段：
+在支持 stdio 的 MCP 客户端中添加以下配置。配置位置与键名以客户端文档为准。将 `command` 换成构建产物的绝对路径。Windows 的路径可写作 `C:/path/to/codeidx-mcp.exe`。
 
 ```json
 {
   "mcpServers": {
     "codeidx": {
-      "command": "/absolute/path/to/target/release/codeidx-mcp",
-      "args": [],
-      "env": {
-        "RUST_LOG": "info",
-        "CODEIDX_LSP_IDLE_SECS": "300"
-      }
+      "command": "/absolute/path/to/target/release/codeidx-mcp"
     }
   }
 }
 ```
 
-服务端不读任何命令行参数，全部运行期开关通过环境变量注入（见[环境变量](#环境变量)）。
-
-`tools/call` 请求样例（`params.name` 为工具名，`params.arguments` 为蛇形参数）：
+先用 `mount_project` 挂载项目的绝对路径。已挂载随仓示例项目后，给 `search_code` 传入下列参数即可查到示例函数。
 
 ```json
-{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"mount_project","arguments":{"path":"/absolute/project/root"}}}
+{"path":"/absolute/path/to/codeidx/tests/fixtures/sample-project","query":"unicorn_marker_fn","mode":"keyword","top_k":1}
 ```
 
-### 11 工具速查
+这次查询的结果如下（节选）。
 
-`tools/list` 一次返回全部 11 个工具。需要查询项目时，调用 `mount_project` 建立索引，然后直接调用所需工具。例如，已知文件路径和符号名时，挂载后即可调用 `read_symbol`。服务启动时不会扫描项目。
+```text
+@"src/lib.rs"
+1	27-32	15.98	"unicorn_marker_fn"	"pub fn unicorn_marker_fn(cfg: &GoldConfig) -> String {…"
+```
 
-参数名使用蛇形（snake_case）。`mount_project` 的 `path` 是待挂载项目的绝对路径。查询、同步和卸载使用已挂载项目的绝对路径。`list_mounted_projects` 无需参数。LSP 的 `line` 从 1 起，`character` 从 0 起（UTF-16 code unit）。
+结果按文件分组，保留全局排名、行范围、分数和代码片段。正文位于 `content[0].text`，格式可选 `compact`（默认）、`json` 或 `md`。`tools/list` 一次返回全部 11 个工具。挂载后可直接调用任意查询工具。
 
-| 工具 | 关键参数 | 一句话用途 |
-|---|---|---|
-| `mount_project` | `path`；`enable_vector?`（默认 false）；`auto_sync?`（默认 true） | 挂载项目并在内存中构建索引；返回 `skipped_binary/skipped_oversize/skipped_unsupported` 三类跳过计数与 `vector_degraded/vector_degraded_reason` 降级标记 |
-| `unmount_project` | `path` | 卸载项目：销毁内存索引并回收关联的 LSP 子进程 |
-| `list_mounted_projects` | — | 列出当前已挂载的项目及其索引规模 |
-| `sync_project` | `path` | 增量同步，反映文件系统的增 / 改 / 删；`failed`/`failed_files`（上限 20）真实列出重建失败文件 |
-| `get_repo_map` | `path`；`focus_files?`；`token_budget?`（默认 3000） | PageRank 加权骨架图；首行元信息头 `# repo_map symbols/shown/budget/used_tokens/truncated`，未索引聚焦文件逐个标记 `# focus_files ignored: <path>` |
-| `search_code` | `path`；`query`；`mode?`；`top_k?`；`token_budget?` | 按文件分组的代码命中，带降级与截断数据 |
-| `get_file_outline` | `path`；`file_path` | 单个文件的符号、行范围与签名（无函数体） |
-| `read_symbol` | `path`；`file_path`；`symbol_name` | 指定符号的完整实现代码 |
-| `lsp_definition` | `path`；`file_path`；`line`；`character` | 跳转到指定位置的符号定义 |
-| `lsp_references` | `path`；`file_path`；`line`；`character` | 列出指定位置符号的全部引用 |
-| `lsp_hover` | `path`；`file_path`；`line`；`character` | 返回指定位置的 hover 信息 |
+<details>
+<summary>工具一览</summary>
 
-### 环境变量
+| 查询目标 | 工具 |
+|---|---|
+| 项目生命周期 | `mount_project`、`unmount_project`、`list_mounted_projects`、`sync_project` |
+| 仓库与文件结构 | `get_repo_map`、`get_file_outline` |
+| 找代码与读取实现 | `search_code`、`read_symbol` |
+| 定义、引用和类型信息 | `lsp_definition`、`lsp_references`、`lsp_hover` |
 
-| 变量 | 默认 | 作用 |
-|---|---|---|
-| `CODEIDX_LSP_IDLE_SECS` | 300 | LSP 子进程空闲回收秒数；超时未用的语言服务器自动 kill，下次调用再冷启动 |
-| `CODEIDX_DISABLE_VECTOR` | 未设置 | 设为 `1` 强制纯 FTS5：vector / hybrid 请求一律降级 keyword，`mode` 回显实际执行模式 |
-| `CODEIDX_EMBED_MODEL` | `bgesmallzhv15` | 向量模型，支持 `bgelargezhv15`（1024 维，真实推理与资源占用待验收）。变更后需重启进程。 |
-| `RUST_LOG` | `info` | tracing 日志过滤（如 `codeidx=debug`）；日志全部写 stderr，绝不污染 stdout |
+`path` 为项目根目录的绝对路径，`file_path` 为项目内相对路径。LSP 行号从 1 开始，列号使用 UTF-16 代码单元计数，从 0 开始。stdio 使用逐行 JSON-RPC，日志走 stderr。详见[架构与协议](ARCHITECTURE.md)。
 
-### MCP 结果格式
+</details>
 
-所有工具都接受可选的 `format`。默认 `compact` 返回纯文本正文，`json` 返回 JSON 正文，`md` 把紧凑正文包在 Markdown 代码围栏内。外层仍使用 MCP JSON-RPC，文本位于 `content[0].text`。
+<a name="terminal"></a>
 
-- RepoMap 每个文件只写一次路径，下一行起以一个空格缩进列出符号。文件大纲逐行给出行范围、符号类型和签名或名称。
-- 搜索用 `@` 加 JSON 字符串标记路径，数据行用 Tab 分隔全局排名、行范围、两位小数分数、符号和片段。后两列使用 JSON 字符串转义，无符号时为 `null`。排名保留引擎顺序信息，片段保留收到的缩进和空行。
-- LSP 定义和引用逐行给出 `path:line:character`。项目状态使用键值行或 TSV，布尔状态用 `0/1`。
-- RepoMap 和搜索的预算按数据区 UTF-8 字节数除以四向上取整，包括分组路径，元信息另计。实际分词数依模型而异。
+## 终端界面
 
-已有脚本读取项目报告、LSP 或搜索的 JSON 时，请显式传 `format: "json"`。搜索 JSON 保留 `results` TSV 字符串。RepoMap 和大纲的 JSON 格式提供 `files` 和 `symbols` 数据。
+```sh
+./target/release/codeidx-tui
+```
 
-### 演示：真实仓库的 Token 实测
+Windows PowerShell 中运行 `.\target\release\codeidx-tui.exe`。输入项目路径并按 <kbd>Enter</kbd> 挂载。用 <kbd>F1</kbd> 至 <kbd>F5</kbd> 切换仓库概览、搜索、文件大纲、LSP 和项目列表。在搜索页输入关键词并按 <kbd>Enter</kbd>，再用方向键选中符号，按 <kbd>Enter</kbd> 查看源码。按 <kbd>?</kbd> 查看按键。
 
-在同一个匿名仓库上对比旧版与当前紧凑格式。关闭向量索引后，本次挂载用时 **399 ms**，索引了 **187 个文件、4,821 个符号**。
+<p align="center">
+  <img src=".github/assets/terminal-search.svg" alt="实际运行的 Codeidx 终端界面在随仓示例项目中搜索 unicorn_marker_fn" width="860">
+</p>
 
-| 场景 | 旧版 | 当前紧凑格式 | 额外去重试跑 |
+*画面采集自实际运行的终端界面，搜索对象为随仓测试项目。*
+
+<a name="benchmark"></a>
+
+## 一个真实仓库的 Token 实测
+
+在同一匿名仓库中关闭向量索引，单次挂载用时 **399 ms**，索引了 **187 个文件、4,821 个符号**。表中只统计 MCP 正文，以 `o200k_base` 实际分词。
+
+| 场景 | 旧版 | 当前紧凑格式 | 本地去重原型 |
 |---|---:|---:|---:|
-| RepoMap（两版均返回 3,847 个符号） | 47,076 | **24,360（省 48.3%）** | — |
-| 单文件大纲（两版均返回 47 个符号） | 923 | **723（省 21.7%）** | — |
-| 7 次关键词搜索（共 160 条命中） | 8,312 | **7,572（省 8.9%）** | **7,231（在紧凑格式上再省 4.5%）** |
+| RepoMap，两版均返回 3,847 个符号 | 47,076 | **24,360（省 48.3%）** | — |
+| 单文件大纲，两版均返回 47 个符号 | 923 | **723（省 21.7%）** | — |
+| 7 次关键词搜索，共 160 条命中 | 8,312 | **7,572（省 8.9%）** | **7,231（再省 4.5%）** |
 
-表中只统计 MCP 返回正文（`content[0].text`），使用 `o200k_base` 实际分词。用 `cl100k_base` 复核时，搜索去重也额外节省约 4.5%。
+原型在单次查询内复用同一文件中完全相同的代码行，并逐条验证片段可原样还原。其中一次查询从 913 降至 777 tokens，再省 14.9%。用 `cl100k_base` 复核时，搜索去重也额外节省约 4.5%。收益随查询和仓库变化。更多性能数据见[验收记录](docs/acceptance-log.md)。
 
-额外去重是本地原型，仍待集成。它在单次查询的同一文件内复用完全相同的代码行，试跑逐条验证了各片段可原样还原。其中一条查询从 913 降到 777 tokens，额外节省 14.9%。本次对照只覆盖表中三类工具。
+<a name="languages"></a>
 
-## 给人的表面：codeidx-tui
+## 语言与平台
 
-`cargo run --locked -p codeidx-tui` 启动终端前端，直接使用本地索引引擎。输入项目路径或用方向键选中 HOME 下的目录，按 Enter 挂载。向量索引默认关闭，Ctrl+V 切换。
+Tree-sitter 支持 Rust、Python、TypeScript、JavaScript、Go、Java、C、C++、C#、Kotlin、Dart、PHP 和 HTML。HTML 索引带显式 `id` 的元素。PHP 索引常见声明与静态可识别引用。
 
-- F1–F5 切换 Skeleton、Search、Outline、Lsp、Projects。
-- Search 的 Tab 切换检索模式，Enter 执行检索或下钻符号源码。
-- Lsp 输入 `相对路径:行:列`（行从 1 起，列从 0 起），Enter 查定义，Ctrl+R 查引用。首次请求会按需启动本机语言服务器。
-- Projects 用 `s` 同步索引、`u` 卸载。`?` 查看按键，`q` 请求退出。
+LSP 根据本机 `PATH` 查找外部服务器。Rust、Python 和 Go 已做端到端验证。Linux 和 Windows MSVC 的 MCP 已通过原生运行检查。Windows 的交互式终端界面和 macOS 的运行验收仍待验证。构建细节见[兼容性说明](docs/COMPAT.md)。
 
-`cargo run --locked -p codeidx-tui -- --selftest` 无需终端即可验证挂载、各页面渲染、检索降级、符号下钻和卸载。
+## 开发与验证
 
-## 性能与资源实测
-
-以下数字全部出自 [docs/acceptance-log.md](docs/acceptance-log.md) 的验收与探针实测记录（release 二进制；向量相关为 fastembed BAAI/bge-small-zh-v1.5）：
-
-| 场景 | 实测（release） | 出处（acceptance-log 条目） |
-|---|---|---|
-| 空闲常驻（零扫描/零模型/零 LSP） | VmRSS **10.3MB** | 收尾清理与实测数字补录 |
-| 挂载后（无向量，多语言 fixture） | **≈17.8MB** | release 实测 |
-| fixture 挂载含向量全流程（缓存命中：模型 init + 6 文件索引 + ~20 chunk 嵌入） | **508ms** | 收尾清理与实测数字补录 |
-| 真实仓库自举首挂（49 文件、真向量、缓存命中） | RSS **823MB** / **41.7s** | 产物语义硬化（自举终版） |
-| 同上，ONNX 修复前（对比） | 4071MB / 65–95s | dogfooding 自举 |
-| 模型常驻（懒加载后，设计内：进程内单例，unmount 不回落） | **+131.6MB** | 收尾清理与实测数字补录 |
-| 检索（真模型 vector / hybrid 单次） | **5ms** | 收尾清理与实测数字补录 |
-| 语义命中实证 | 中文查询"组合配置生成标记字符串的函数"在 vector / hybrid 双路命中 `unicorn_marker_fn`（top8 第 4） | Phase2 混合检索 |
-| 质量门禁 | `cargo test` **143** passed / 0 failed / 1 ignored；黑盒 bb_phase1 **17/17** + bb_phase2 **6/6** + bb_phase3 **8/8** | 产物紧凑化 |
-
-- 自举（挂载本仓库 49 文件 / ~680 符号）曾暴露 ONNX memory-pattern arena 缓存与 glibc malloc arena 放大缺陷（每种新 batch shape 触发独立 arena，多线程放大 ~4×）；三项修复（`mallopt(M_ARENA_MAX,2)`、批定长与文本截断 1600 字符、长度分桶排序 + `ONNX_INTRA_THREADS=4`）后 **4.9 倍内存改善**。
-- 诚实语义：**「挂载毫秒级」仅指无向量路径**；含向量的真实仓库首挂是一次性成本（此后 `sync_project` 增量仅重嵌变更块）。首次无缓存还需下载 90.5MB 模型约 86s。
-- `mount_project` / `search_code` 返回体自带 `elapsed_ms` 字段，可在自己的环境里复测。
-
-## 架构
-
-引擎居中，双表面分列两侧：
-
-```mermaid
-flowchart LR
-    AI["AI（MCP 客户端 / Agent / IDE）"]
-    H["人（终端）"]
-    MCP["codeidx-mcp · MCP 接入层<br/>stdio · JSON-RPC 2.0（一行一条 JSON）<br/>11 工具 · 紧凑行产物 · 预算双闸"]
-    TUI["codeidx-tui · 终端前端"]
-
-    subgraph ENG["codeidx 引擎 · 单一 Rust 二进制 · 纯内存"]
-        direction TB
-        M["ProjectManager（挂载表）<br/>mount / unmount / sync"]
-        A["AST 层<br/>Tree-sitter 符号/引用提取<br/>+ PageRank RepoMap"]
-        F["检索层 · SQLite :memory:<br/>FTS5 BM25 + sqlite-vec + RRF 融合<br/>fastembed 懒加载（可选）"]
-        L["LSP 子进程池<br/>rust-analyzer 等<br/>idle 超时自动回收"]
-        M --> A
-        M --> F
-        M --> L
-    end
-
-    AI -->|"stdio"| MCP
-    MCP -->|"tools/call"| ENG
-    H -->|"终端交互"| TUI
-    TUI -->|"同一引擎"| ENG
+```sh
+cargo fmt --all --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
 ```
 
-- **内存态**：挂载时才为项目创建 SQLite `:memory:` 库，AST 符号表、依赖图、FTS5 与向量索引全部驻留内存，项目目录不残留任何缓存文件；`unmount` / SIGINT / SIGTERM 销毁内存库并 kill 全部 LSP 子进程。
-- **按需生命周期**：启动零扫描、零模型、零 LSP；embedding 模型仅首次启用向量时懒加载（进程内单例复用）；LSP 子进程按需冷启动、idle 超时回收。
-- Cargo workspace 组成与依赖方向见 [ARCHITECTURE.md](ARCHITECTURE.md) §2。
+- [架构与协议](ARCHITECTURE.md)
+- [验收步骤](docs/ACCEPTANCE.md)
+- [问题反馈](https://github.com/Thatgfsj/codeidx/issues)
 
-## License
+## 许可证
 
-GPL-3.0-or-later
+[GPL-3.0-or-later](LICENSE)
+
+[↑ 回到顶部](#readme-top)
