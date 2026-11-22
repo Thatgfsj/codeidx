@@ -96,11 +96,17 @@ cargo build --locked --release --bin codeidx-mcp --bin codeidx-tui
 
 Windows PowerShell 中运行 `.\target\release\codeidx-tui.exe`。输入项目路径并按 <kbd>Enter</kbd> 挂载。用 <kbd>F1</kbd> 至 <kbd>F5</kbd> 切换仓库概览、搜索、文件大纲、LSP 和项目列表。在搜索页输入关键词并按 <kbd>Enter</kbd>，再用方向键选中符号，按 <kbd>Enter</kbd> 查看源码。按 <kbd>?</kbd> 查看按键。
 
-<p align="center">
-  <img src=".github/assets/terminal-search.svg" alt="实际运行的 Codeidx 终端界面在随仓示例项目中搜索 unicorn_marker_fn" width="860">
-</p>
+在随仓示例项目中搜索 `unicorn_marker_fn`，得到以下结果（节选）。
 
-*画面采集自实际运行的终端界面，搜索对象为随仓测试项目。*
+```text
+Search · keyword
+Query: unicorn_marker_fn
+
+File          Lines  Symbol
+src/lib.rs    27–32  unicorn_marker_fn
+src/main.rs    4–6   —
+src/main.rs    7–12  main
+```
 
 <a name="benchmark"></a>
 
