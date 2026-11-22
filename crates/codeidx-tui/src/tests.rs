@@ -49,6 +49,31 @@ fn render_mount_page_shows_title_vector_toggle_and_dirs() {
 }
 
 #[test]
+fn home_list_scrolls_with_selection_in_a_short_viewport() {
+    let mut app = App::default();
+    app.mount_page.home_dirs = (0..24).map(|i| format!("/home/u/folder-{i:02}")).collect();
+    let list_contains = |app: &App, dir: &str| {
+        let text = ui::render_text(app, 50, 13);
+        let list = text.split_once("HOME 目录").expect("list title").1;
+        list.lines()
+            .any(|line| line.starts_with('│') && line.contains(dir))
+    };
+    assert!(list_contains(&app, "folder-00"));
+    assert!(!list_contains(&app, "folder-23"));
+    for i in 1..24 {
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.mount_page.sel, i);
+        assert!(list_contains(&app, &format!("folder-{i:02}")));
+    }
+    assert!(!list_contains(&app, "folder-00"));
+    for i in (0..23).rev() {
+        app.handle_key(key(KeyCode::Up));
+        assert_eq!(app.mount_page.sel, i);
+        assert!(list_contains(&app, &format!("folder-{i:02}")));
+    }
+}
+
+#[test]
 fn render_mounting_spinner() {
     let mut app = App::default();
     app.mount_page.busy = Some("/tmp/proj".into());
