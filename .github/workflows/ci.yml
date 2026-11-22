@@ -75,6 +75,8 @@ jobs:
           basedpyright --version | grep -Fx 'basedpyright 1.40.2'
       - name: bb_phase3 (F3.1-F3.7)
         run: node scripts/bb_phase3.mjs ./target/release/codeidx-mcp
+      - name: call flow with native rust-analyzer and offline fallback
+        run: node scripts/bb_callflow.mjs ./target/release/codeidx-mcp --lsp
       - name: model cache (bge-small-zh-v1.5)
         uses: actions/cache@v4
         with:
@@ -86,11 +88,10 @@ jobs:
             || { echo "::error::huggingface.co unreachable; bb_phase2 model download would fail"; exit 1; }
       - name: bb_phase2 (F2.1-F2.6)
         run: node scripts/bb_phase2.mjs ./target/release/codeidx-mcp
-      # TODO(tui): Lead 集成 codeidx-tui 后启用 selftest（禁止提前编造）：
-      # - name: tui selftest
-      #   run: |
-      #     cargo build --release --bin codeidx-tui
-      #     ./target/release/codeidx-tui --selftest
+      - name: native terminal selftest
+        run: |
+          cargo build --locked --release --bin codeidx-tui
+          ./target/release/codeidx-tui --selftest
 
   # Windows 原生 MSVC 构建、单测和 stdio/LSP 黑盒。
   windows-smoke:
