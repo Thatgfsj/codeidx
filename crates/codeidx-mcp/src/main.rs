@@ -1,13 +1,15 @@
 //! codeidx-mcp —— 全局按需挂载的代码索引 MCP 服务（stdio JSON-RPC）。
 //!
 //! Phase 3 接线：lsp_* 三工具走真 LSP 桥（本文件 LSP 单例）；
-//! 其余 8 个工具接线真 ProjectManager（本文件 MANAGER 单例）。
+//! 索引和调用链工具共享 ProjectManager（本文件 MANAGER 单例）。
 //!
 //! 红线（ARCHITECTURE §4）：stdout 只允许 JSON-RPC 协议字节，
 //! 一切日志 / tracing 一律走 stderr。
 
+mod callflow;
 mod handlers;
 mod output;
+mod output_callflow;
 mod output_navigation;
 mod output_search;
 mod output_status;

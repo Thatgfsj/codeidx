@@ -70,7 +70,7 @@ cargo build --locked --release --bin codeidx-mcp --bin codeidx-tui
 1	27-32	15.98	"unicorn_marker_fn"	"pub fn unicorn_marker_fn(cfg: &GoldConfig) -> String {…"
 ```
 
-结果按文件分组，保留全局排名、行范围、分数和代码片段。正文位于 `content[0].text`，省略 `format` 时只返回 `compact` 正文。需要 JSON 或 Markdown 展示时，分别显式传 `format: "json"` 或 `format: "md"`。`tools/list` 一次返回全部 11 个工具。挂载后可直接调用任意查询工具。
+结果按文件分组，保留全局排名、行范围、分数和代码片段。正文位于 `content[0].text`，省略 `format` 时只返回 `compact` 正文。需要 JSON 或 Markdown 展示时，分别显式传 `format: "json"` 或 `format: "md"`。`tools/list` 一次返回全部 12 个工具。挂载后可直接调用任意查询工具。
 
 <details>
 <summary>工具一览</summary>
@@ -80,11 +80,14 @@ cargo build --locked --release --bin codeidx-mcp --bin codeidx-tui
 | 项目生命周期 | `mount_project`、`unmount_project`、`list_mounted_projects`、`sync_project` |
 | 仓库与文件结构 | `get_repo_map`、`get_file_outline` |
 | 找代码与读取实现 | `search_code`、`read_symbol` |
+| 调用链与影响范围 | `trace_calls` |
 | 定义、引用和类型信息 | `lsp_definition`、`lsp_references`、`lsp_hover` |
 
 `path` 为项目根目录的绝对路径，`file_path` 为项目内相对路径。LSP 行号从 1 开始，列号使用 UTF-16 代码单元计数，从 0 开始。stdio 使用逐行 JSON-RPC，日志走 stderr。详见[架构与协议](ARCHITECTURE.md)。
 
 </details>
+
+`trace_calls` 以指定函数或自动入口生成调用树。`direction` 支持 `down`、`up` 和 `both`，用节点的文件、行和符号作为 `from` 可继续展开。工具按需用本地 LSP 精化同名候选，无法确认时保留静态候选并报告降级。
 
 <a name="terminal"></a>
 
@@ -94,7 +97,7 @@ cargo build --locked --release --bin codeidx-mcp --bin codeidx-tui
 ./target/release/codeidx-tui
 ```
 
-Windows PowerShell 中运行 `.\target\release\codeidx-tui.exe`。输入项目路径并按 <kbd>Enter</kbd> 挂载。用 <kbd>F1</kbd> 至 <kbd>F5</kbd> 切换仓库概览、搜索、文件大纲、LSP 和项目列表。在搜索页输入关键词并按 <kbd>Enter</kbd>，再用方向键选中符号，按 <kbd>Enter</kbd> 查看源码。按 <kbd>?</kbd> 查看按键。
+Windows PowerShell 中运行 `.\target\release\codeidx-tui.exe`。输入项目路径并按 <kbd>Enter</kbd> 挂载。用 <kbd>F1</kbd> 至 <kbd>F5</kbd> 切换仓库概览、搜索、文件大纲、LSP 和项目列表。在搜索页输入关键词并按 <kbd>Enter</kbd>，再用方向键选中符号，按 <kbd>Enter</kbd> 查看源码。按 <kbd>F6</kbd> 打开调用链，使用方向键移动和展开或折叠，按 <kbd>Enter</kbd> 查看选中定义。按 <kbd>?</kbd> 查看按键。
 
 在随仓示例项目中搜索 `unicorn_marker_fn`，得到以下结果（节选）。
 

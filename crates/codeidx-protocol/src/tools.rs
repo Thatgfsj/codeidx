@@ -1,4 +1,4 @@
-//! 11 个 MCP 工具的输入 / 输出 DTO。
+//! 12 个 MCP 工具的输入 / 输出 DTO。
 //!
 //! - 输出 DTO 序列化为紧凑 JSON 文本，作为 tools/call 的 content
 //!   （ARCHITECTURE §4 的省 token 约定），字段名与表格逐字一致；
@@ -33,6 +33,57 @@ pub mod tool_name {
     pub const LSP_REFERENCES: &str = "lsp_references";
     /// lsp_hover
     pub const LSP_HOVER: &str = "lsp_hover";
+    /// trace_calls
+    pub const TRACE_CALLS: &str = "trace_calls";
+}
+
+/// trace_calls 的遍历方向。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TraceDirectionParam {
+    /// 展开被调方。
+    Down,
+    /// 展开调用方。
+    Up,
+    /// 展开两个方向。
+    Both,
+}
+
+/// trace_calls 返回的可续查节点位置。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TraceFromParam {
+    /// 项目内相对路径。
+    pub file: String,
+    /// 从 1 开始的定义行。
+    pub line: u32,
+    /// 符号名。
+    pub symbol: String,
+}
+
+/// trace_calls 参数，未设的选项使用调用链引擎的默认值。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraceCallsParams {
+    /// 已挂载项目绝对路径。
+    pub path: String,
+    /// 要展开的符号名。
+    pub symbol: Option<String>,
+    /// 与符号名一起用来消歧的项目内相对路径。
+    pub file_path: Option<String>,
+    /// 使用上次结果的定义位置续查。
+    pub from: Option<TraceFromParam>,
+    /// 要展开的方向。
+    pub direction: Option<TraceDirectionParam>,
+    /// 遍历深度限制。
+    pub max_depth: Option<usize>,
+    /// 自动入口数量限制。
+    pub max_roots: Option<usize>,
+    /// 节点数量限制。
+    pub max_nodes: Option<usize>,
+    /// 三种格式共享的正文预算。
+    pub budget: Option<usize>,
+    /// 是否用 LSP 精化歧义边。
+    pub refine_lsp: Option<bool>,
 }
 
 /// search_code 的检索模式。

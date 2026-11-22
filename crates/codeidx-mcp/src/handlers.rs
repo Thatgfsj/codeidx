@@ -1,9 +1,9 @@
-//! 11 个工具的 handler 接线（Phase 1-B）。
+//! 索引和 LSP 工具处理器。
 //!
 //! - mount / unmount / list / sync：直连全局 `ProjectManager`（main.rs 单例）；
 //! - get_repo_map / search_code / get_file_outline / read_symbol：
 //!   `with_project` 拿上下文后调用 ast / store 真引擎；
-//! - lsp_*：LSP 桥由 Phase 3 交付，无条件返回硬文案（契约不变）。
+//! - lsp_*：调用共享 LSP 桥。
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -23,7 +23,7 @@ use crate::output::OutputFormat;
 use crate::{output_navigation, output_search, output_status, MANAGER};
 
 /// 参数反序列化：失败统一转执行错误（isError）。
-fn parse_args<T: DeserializeOwned>(args: &Value) -> Result<T, ToolError> {
+pub(crate) fn parse_args<T: DeserializeOwned>(args: &Value) -> Result<T, ToolError> {
     serde_json::from_value(args.clone())
         .map_err(|e| ToolError::new(format!("invalid arguments: {e}")))
 }

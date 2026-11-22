@@ -1,4 +1,4 @@
-//! 11 个工具的元数据与 JSON Schema 字符串。
+//! 12 个工具的元数据与 JSON Schema 字符串。
 //!
 //! [`TOOL_SPECS`] 是 tools/list 与路由表共用的事实来源：
 //! schema 字符串在此一次定义，单测保证其可解析、结构合法。
@@ -37,8 +37,8 @@ impl ToolSpec {
     }
 }
 
-/// 全部 11 个工具的规格表（顺序即 tools/list 下发顺序）。
-pub const TOOL_SPECS: [ToolSpec; 11] = [
+/// 全部 12 个工具的规格表（顺序即 tools/list 下发顺序）。
+pub const TOOL_SPECS: [ToolSpec; 12] = [
     ToolSpec {
         name: tool_name::MOUNT_PROJECT,
         description: "挂载项目并在内存中构建索引，默认监听文件变更自动同步；其余工具仅对已挂载项目可用。",
@@ -94,6 +94,26 @@ pub const TOOL_SPECS: [ToolSpec; 11] = [
         description: "返回指定位置的 hover 信息（Phase 3 交付 LSP 桥）。",
         schema_json: r#"{"type":"object","properties":{"path":{"type":"string","description":"已挂载项目的根目录绝对路径"},"file_path":{"type":"string","description":"目标文件相对路径"},"line":{"type":"integer","minimum":1,"description":"行号（1-based）"},"character":{"type":"integer","minimum":0,"description":"列号（0-based）"}},"required":["path","file_path","line","character"]}"#,
     },
+    ToolSpec {
+        name: tool_name::TRACE_CALLS,
+        description: "查看项目内的调用链。以自动入口、指定符号或上次结果节点为根，查看被调方、调用方或两者。静态候选与 LSP 确认分别标记。",
+        schema_json: r#"{
+          "type":"object",
+          "properties":{
+            "path":{"type":"string","description":"已挂载项目的根目录绝对路径"},
+            "symbol":{"type":"string","minLength":1,"description":"起跳符号名，省略时自动选入口"},
+            "file_path":{"type":"string","minLength":1,"description":"用于消歧的项目内相对路径，与 symbol 同用"},
+            "from":{"type":"object","description":"继续展开上次结果中的节点，不能与 symbol 或 file_path 同用","properties":{"file":{"type":"string","minLength":1},"line":{"type":"integer","minimum":1,"maximum":4294967295},"symbol":{"type":"string","minLength":1}},"required":["file","line","symbol"],"additionalProperties":false},
+            "direction":{"type":"string","enum":["down","up","both"],"default":"down","description":"down 查看被调方，up 查看调用方，both 查看两个方向"},
+            "max_depth":{"type":"integer","minimum":0,"maximum":16,"default":5,"description":"遍历深度上限，根节点深度为 0"},
+            "max_roots":{"type":"integer","minimum":1,"maximum":50,"default":10,"description":"自动入口数量上限"},
+            "max_nodes":{"type":"integer","minimum":1,"maximum":1000,"default":128,"description":"返回节点数上限"},
+            "budget":{"type":"integer","minimum":200,"maximum":8000,"default":1200,"description":"以 compact 正文估算的 token 预算，三种格式使用同一棵预算内的树"},
+            "refine_lsp":{"type":"boolean","default":true,"description":"按需用 LSP 精化歧义边，不可用时保留静态候选"}
+          },
+          "required":["path"]
+        }"#,
+    },
 ];
 
 #[cfg(test)]
@@ -102,8 +122,8 @@ mod tests {
     use serde_json::Value;
 
     #[test]
-    fn specs_cover_11_unique_contract_tools() {
-        assert_eq!(TOOL_SPECS.len(), 11);
+    fn specs_cover_12_unique_contract_tools() {
+        assert_eq!(TOOL_SPECS.len(), 12);
         let names: Vec<_> = TOOL_SPECS.iter().map(|spec| spec.name).collect();
         let unique: std::collections::HashSet<_> = names.iter().copied().collect();
         assert_eq!(names.len(), unique.len(), "tool names must be unique");
@@ -119,6 +139,7 @@ mod tests {
             "lsp_definition",
             "lsp_references",
             "lsp_hover",
+            "trace_calls",
         ] {
             assert!(names.contains(&expected), "missing tool: {expected}");
         }
