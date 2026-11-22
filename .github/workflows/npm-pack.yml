@@ -1,0 +1,47 @@
+name: Build npm release artifacts
+on:
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  pack:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            platform: linux-x64
+          - runner: windows-latest
+            platform: win32-x64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rust-analyzer
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release --bin codeidx-mcp --bin codeidx-tui
+      - name: Smoke test Linux binaries
+        if: runner.os == 'Linux'
+        run: |
+          node scripts/bb_callflow_self.mjs ./target/release/codeidx-mcp
+          ./target/release/codeidx-tui --selftest
+      - name: Smoke test Windows binaries
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          node scripts/bb_windows.mjs ./target/release/codeidx-mcp.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./target/release/codeidx-tui.exe --selftest
+      - run: node scripts/stage_npm.mjs ${{ matrix.platform }} target/release npm-stage
+      - run: npm pack ./npm-stage/${{ matrix.platform }} --pack-destination npm-stage
+      - if: runner.os == 'Linux'
+        run: npm pack ./npm-stage/launcher --pack-destination npm-stage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-${{ matrix.platform }}
+          path: npm-stage/*.tgz
+          if-no-files-found: error
