@@ -31,7 +31,15 @@ Codeidx 用 Rust 为项目建立索引。你可以找出跨文件的相关符号
 
 ## 快速开始
 
-需要 [Rust stable](https://rustup.rs/) 与本机 C 编译、链接工具链。源码构建可能下载 ONNX Runtime。Windows 使用 Rust MSVC 工具链、C++ Build Tools 和 Windows SDK 10.0.19041 或更新版本。
+Linux x64 和 Windows x64 有预编译包，通过 npm 安装：
+
+```sh
+npm install -g @thatgfsj/codeidx@0.1.0
+```
+
+安装后 `codeidx-mcp` 与 `codeidx-tui` 已在 `PATH` 上。npm 包使用 Node.js 启动器，需要 Node.js 20 或更高版本。Linux 包依赖 glibc 2.39（Ubuntu 24.04 及更新发行版的运行环境），Windows 包为 x64 MSVC 构建。其他平台或没有 Node.js 时从源码构建。
+
+源码构建需要 [Rust stable](https://rustup.rs/) 与本机 C 编译、链接工具链，可能下载 ONNX Runtime。Windows 使用 Rust MSVC 工具链、C++ Build Tools 和 Windows SDK 10.0.19041 或更新版本。
 
 ```sh
 git clone https://github.com/Thatgfsj/codeidx.git
@@ -39,19 +47,19 @@ cd codeidx
 cargo build --locked --release --bin codeidx-mcp --bin codeidx-tui
 ```
 
-可执行文件位于 `target/release/`，Windows 文件带 `.exe` 后缀。MCP 和终端界面运行时无需 Python 或 Node.js。语言服务器按需单独安装。
+可执行文件位于 `target/release/`，Windows 文件带 `.exe` 后缀。源码构建的原生可执行文件运行时无需 Python 或 Node.js。语言服务器按需单独安装。
 
 <a name="mcp"></a>
 
 ## 接入 MCP
 
-在支持 stdio 的 MCP 客户端中添加以下配置。配置位置与键名以客户端文档为准。将 `command` 换成构建产物的绝对路径。Windows 的路径可写作 `C:/path/to/codeidx-mcp.exe`。
+在支持 stdio 的 MCP 客户端中添加以下配置。配置位置与键名以客户端文档为准。npm 安装后 `command` 直接写 `codeidx-mcp`；从源码构建时换成 `target/release/codeidx-mcp` 的绝对路径，Windows 可写作 `C:/path/to/codeidx-mcp.exe`。
 
 ```json
 {
   "mcpServers": {
     "codeidx": {
-      "command": "/absolute/path/to/target/release/codeidx-mcp"
+      "command": "codeidx-mcp"
     }
   }
 }
@@ -94,10 +102,10 @@ cargo build --locked --release --bin codeidx-mcp --bin codeidx-tui
 ## 终端界面
 
 ```sh
-./target/release/codeidx-tui
+codeidx-tui
 ```
 
-Windows PowerShell 中运行 `.\target\release\codeidx-tui.exe`。输入项目路径并按 <kbd>Enter</kbd> 挂载。用 <kbd>F1</kbd> 至 <kbd>F5</kbd> 切换仓库概览、搜索、文件大纲、LSP 和项目列表。在搜索页输入关键词并按 <kbd>Enter</kbd>，再用方向键选中符号，按 <kbd>Enter</kbd> 查看源码。按 <kbd>F6</kbd> 打开调用链，使用方向键移动和展开或折叠，按 <kbd>Enter</kbd> 查看选中定义。按 <kbd>?</kbd> 查看按键。
+npm 安装后直接运行上面的命令；从源码构建时运行 `./target/release/codeidx-tui`。Windows PowerShell 中为 `.\target\release\codeidx-tui.exe`。输入项目路径并按 <kbd>Enter</kbd> 挂载。用 <kbd>F1</kbd> 至 <kbd>F5</kbd> 切换仓库概览、搜索、文件大纲、LSP 和项目列表。在搜索页输入关键词并按 <kbd>Enter</kbd>，再用方向键选中符号，按 <kbd>Enter</kbd> 查看源码。按 <kbd>F6</kbd> 打开调用链，使用方向键移动和展开或折叠，按 <kbd>Enter</kbd> 查看选中定义。按 <kbd>?</kbd> 查看按键。
 
 在随仓示例项目中搜索 `unicorn_marker_fn`，得到以下结果（节选）。
 
