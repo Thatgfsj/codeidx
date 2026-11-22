@@ -52,7 +52,7 @@ async fn rust_definition_refines_an_ambiguous_site() {
     fs::write(root.join("Cargo.toml"), "[package]\nname = \"trace_fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[lib]\npath = \"entry.rs\"\n").unwrap();
     fs::write(
         root.join("entry.rs"),
-        "mod first;\nmod second;\npub fn caller() { first::ambiguous(); }\n",
+        "mod first;\nmod second;\nuse first::ambiguous;\npub fn caller() { ambiguous(); }\n",
     )
     .unwrap();
     let pm = ProjectManager::new();
@@ -76,6 +76,107 @@ async fn rust_definition_refines_an_ambiguous_site() {
     assert_eq!(
         result.roots[0].children[0].confidence,
         Some(TraceConfidence::Lsp)
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires rust-analyzer and rust-src"]
+async fn rust_definition_finds_project_method_and_prunes_external_homonym() {
+    let fixture = Fixture::create();
+    let root = &fixture.0;
+    fs::write(root.join("Cargo.toml"), "[package]\nname = \"method_trace_fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[lib]\npath = \"entry.rs\"\n").unwrap();
+    fs::write(
+        root.join("entry.rs"),
+        r#"pub struct Local;
+impl Local {
+    pub fn ok(&self) {}
+}
+pub fn internal(x: Local) {
+    let alias = x;
+    outside_index_a();
+    outside_index_b();
+    outside_index_c();
+    alias.ok();
+}
+pub fn external(x: Result<(), ()>) {
+    let alias = x;
+    alias.ok();
+}
+pub fn no_definition() {
+    missing::ok();
+}
+"#,
+    )
+    .unwrap();
+    let pm = ProjectManager::new();
+    pm.mount_with_auto_sync(root, false, false).unwrap();
+    let path = root.to_str().unwrap();
+    let bridge = LspBridge::new(60);
+    let query = |symbol: &str, direction| TraceOptions {
+        symbol: Some(symbol.to_owned()),
+        file_path: Some("entry.rs".into()),
+        direction,
+        max_depth: 1,
+        ..Default::default()
+    };
+    let down = trace_calls(
+        &pm,
+        Some(&bridge),
+        path,
+        query("internal", TraceDirection::Down),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        down.lsp_attempted, 1,
+        "noise spent request budget: {down:?}"
+    );
+    let node = down.roots[0]
+        .children
+        .iter()
+        .find(|n| n.location.symbol == "ok")
+        .unwrap_or_else(|| panic!("{down:?}"));
+    assert_eq!(node.location.symbol, "ok", "{down:?}");
+    assert_eq!(node.confidence, Some(TraceConfidence::Lsp), "{down:?}");
+    assert_eq!(node.location.line, 3);
+    let external = trace_calls(
+        &pm,
+        Some(&bridge),
+        path,
+        query("external", TraceDirection::Down),
+    )
+    .await
+    .unwrap();
+    assert!(external.roots[0].children.is_empty(), "{external:?}");
+    assert_eq!(external.lsp_refined, 1, "{external:?}");
+    assert!(!external.lsp_degraded, "{external:?}");
+    let unknown = trace_calls(
+        &pm,
+        Some(&bridge),
+        path,
+        query("no_definition", TraceDirection::Down),
+    )
+    .await
+    .unwrap();
+    assert_eq!(unknown.lsp_refined, 0, "{unknown:?}");
+    assert_eq!(unknown.roots[0].children.len(), 1, "{unknown:?}");
+    let reverse = trace_calls(&pm, Some(&bridge), path, query("ok", TraceDirection::Up))
+        .await
+        .unwrap();
+    bridge.kill_all();
+    let incoming = &reverse.roots[0].children;
+    assert!(
+        !incoming
+            .iter()
+            .any(|node| node.location.symbol == "external"),
+        "{reverse:?}"
+    );
+    assert!(
+        incoming
+            .iter()
+            .any(|node| node.location.symbol == "internal"
+                && node.confidence == Some(TraceConfidence::Lsp)),
+        "{reverse:?}"
     );
 }
 

@@ -83,6 +83,38 @@ impl LspBridge {
         character: u32,
         file_text: &str,
     ) -> Result<Vec<Location>, LspError> {
+        let (result, root) = self
+            .definition_raw(root, lang, rel_path, line, character, file_text)
+            .await?;
+        Ok(proto::parse_locations(&result, &root))
+    }
+
+    /// Definition for graph refinement. None means at least one response entry
+    /// could not be interpreted, not that the language server found no targets.
+    pub async fn definition_for_trace(
+        &self,
+        root: &Path,
+        lang: Lang,
+        rel_path: &str,
+        line: u32,
+        character: u32,
+        file_text: &str,
+    ) -> Result<Option<Vec<Location>>, LspError> {
+        let (result, root) = self
+            .definition_raw(root, lang, rel_path, line, character, file_text)
+            .await?;
+        Ok(proto::parse_complete_locations(&result, &root))
+    }
+
+    async fn definition_raw(
+        &self,
+        root: &Path,
+        lang: Lang,
+        rel_path: &str,
+        line: u32,
+        character: u32,
+        file_text: &str,
+    ) -> Result<(Value, PathBuf), LspError> {
         let proc = self.process_for(root, lang).await?;
         proc.note_use();
         proc.ensure_doc(rel_path, lang, file_text).await?;
@@ -90,7 +122,7 @@ impl LspBridge {
         let result = proc
             .request_until_meaningful("textDocument/definition", params)
             .await?;
-        Ok(proto::parse_locations(&result, proc.root()))
+        Ok((result, proc.root().to_owned()))
     }
 
     /// textDocument/references（includeDeclaration=false）。

@@ -281,6 +281,36 @@ pub(crate) fn parse_locations(result: &Value, root: &Path) -> Vec<Location> {
     out
 }
 
+/// A call edge may only be removed on a complete definition response. Unlike
+/// the navigation tools, do not silently discard malformed or non-file entries.
+pub(crate) fn parse_complete_locations(result: &Value, root: &Path) -> Option<Vec<Location>> {
+    let items: Vec<&Value> = match result {
+        Value::Null => return Some(Vec::new()),
+        Value::Array(items) => items.iter().collect(),
+        single => vec![single],
+    };
+    let mut out = Vec::new();
+    for item in items {
+        let (uri, pos) = extract_link(item).or_else(|| extract_location(item))?;
+        if !uri_to_path(&uri)?.is_absolute() {
+            return None;
+        }
+        let line = u32::try_from(pos.get("line")?.as_u64()?)
+            .ok()?
+            .checked_add(1)?;
+        let character = u32::try_from(pos.get("character")?.as_u64()?).ok()?;
+        let loc = Location {
+            file: uri_to_display_path(&uri, root)?,
+            line,
+            character,
+        };
+        if !out.contains(&loc) {
+            out.push(loc);
+        }
+    }
+    Some(out)
+}
+
 /// LocationLink：优先 `targetSelectionRange`（符号名范围），退回 targetRange。
 fn extract_link(item: &Value) -> Option<(String, &Value)> {
     let uri = item.get("targetUri")?.as_str()?.to_owned();
@@ -337,5 +367,37 @@ fn append_marked(v: &Value, out: &mut String) {
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod strict_location_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn requires_every_definition_target_to_be_valid() {
+        let root = std::env::temp_dir();
+        let uri = path_to_uri(&root.join("definition.rs"));
+        let target = json!({"uri": uri, "range": {"start": {"line": 3, "character": 8}}});
+        assert_eq!(parse_complete_locations(&json!(null), &root), Some(vec![]));
+        assert_eq!(parse_complete_locations(&json!([]), &root), Some(vec![]));
+        assert_eq!(
+            parse_complete_locations(&json!([target.clone(), target.clone()]), &root),
+            Some(vec![Location {
+                file: "definition.rs".into(),
+                line: 4,
+                character: 8
+            }])
+        );
+        assert!(
+            parse_complete_locations(&json!([target, {"uri": "virtual://generated"}]), &root)
+                .is_none()
+        );
+        assert!(parse_complete_locations(
+            &json!({"uri": uri, "range": {"start": {"line": 3}}}),
+            &root
+        )
+        .is_none());
     }
 }

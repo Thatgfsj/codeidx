@@ -77,6 +77,8 @@ jobs:
         run: node scripts/bb_phase3.mjs ./target/release/codeidx-mcp
       - name: call flow with native rust-analyzer and offline fallback
         run: node scripts/bb_callflow.mjs ./target/release/codeidx-mcp --lsp
+      - name: self-index call target precision
+        run: node scripts/bb_callflow_self.mjs ./target/release/codeidx-mcp --lsp
       - name: model cache (bge-small-zh-v1.5)
         uses: actions/cache@v4
         with:

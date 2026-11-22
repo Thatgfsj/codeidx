@@ -18,10 +18,12 @@ mod refine;
 mod tests;
 
 use index::{Graph, NodeId, SiteId};
-use refine::Refiner;
+use refine::{Refiner, Resolution};
 
 /// Trace one bounded tree from the current index. The LSP bridge is shared with
-/// the host's semantic tools and is only queried for visited ambiguous call sites.
+/// the host's semantic tools. Reverse discovery checks static incoming sites
+/// and same-language, same-name named calls within the shared probe budget.
+/// It cannot enumerate aliases, arbitrary dynamic callers or all references.
 pub async fn trace_calls(
     pm: &ProjectManager,
     bridge: Option<&LspBridge>,
@@ -197,20 +199,40 @@ impl<'a> Walk<'a> {
         }
         let truncation_before = self.truncated.depth + self.truncated.nodes + self.truncated.budget;
         self.active.insert(id);
-        let raw = self
-            .graph
-            .frontier(id, entry.branch, self.options.direction);
+        let raw = self.graph.frontier(
+            id,
+            entry.branch,
+            self.options.direction,
+            self.options.refine_lsp,
+        );
         if remaining_depth == 0 {
             node.truncated = raw
                 .iter()
-                .map(|&(site, branch)| self.known_count(site, branch))
+                .map(|&(site, branch)| self.known_count(id, site, branch))
                 .sum();
             self.truncated.depth += node.truncated;
         } else {
+            // Prefer direct candidates to speculative requests in deep branches.
+            let capacity = (self.options.max_nodes - self.nodes).min(self.remaining_bytes / 96);
+            let mut probe = raw
+                .iter()
+                .take(capacity)
+                .filter_map(|&(site, _)| {
+                    self.graph
+                        .probe_priority(site)
+                        .map(|priority| (priority, site))
+                })
+                .collect::<Vec<_>>();
+            probe.sort_by_key(|&(priority, _)| priority);
+            for (_, site) in probe {
+                self.refiner.resolve(self.graph, site).await;
+            }
             for (i, &(site, branch)) in raw.iter().enumerate() {
                 if self.nodes == self.options.max_nodes || self.remaining_bytes < 96 {
-                    let missing: usize =
-                        raw[i..].iter().map(|&(s, b)| self.known_count(s, b)).sum();
+                    let missing: usize = raw[i..]
+                        .iter()
+                        .map(|&(s, b)| self.known_count(id, s, b))
+                        .sum();
                     if self.nodes == self.options.max_nodes {
                         self.truncated.nodes += missing;
                     } else {
@@ -224,7 +246,7 @@ impl<'a> Walk<'a> {
                     if !self.reserve(edge, depth + 1, edges.len() - j) {
                         let more: usize = raw[i + 1..]
                             .iter()
-                            .map(|&(s, b)| self.known_count(s, b))
+                            .map(|&(s, b)| self.known_count(id, s, b))
                             .sum::<usize>();
                         if self.nodes == self.options.max_nodes {
                             self.truncated.nodes += more;
@@ -253,28 +275,33 @@ impl<'a> Walk<'a> {
         node
     }
 
-    fn known_count(&self, site: SiteId, branch: TraceBranch) -> usize {
-        match branch {
-            TraceBranch::Down => self.graph.sites[site].targets.len().max(1),
-            TraceBranch::Up => 1,
+    fn known_count(&self, id: NodeId, site: SiteId, branch: TraceBranch) -> usize {
+        match (branch, self.refiner.cached(site)) {
+            (_, Resolution::External) => 0,
+            (TraceBranch::Down, Resolution::Project(_)) => 1,
+            (TraceBranch::Up, Resolution::Project(target)) => usize::from(target == id),
+            (TraceBranch::Down, _) => self.graph.sites[site].targets.len().max(1),
+            (TraceBranch::Up, _) => usize::from(self.graph.sites[site].targets.contains(&id)),
         }
     }
 
     async fn edges_at(&mut self, id: NodeId, site_id: SiteId, branch: TraceBranch) -> Vec<Entry> {
         let site = &self.graph.sites[site_id];
-        let refined = self.refiner.resolve(self.graph, site_id).await;
-        let (confidence, targets, candidates) = if let Some(refined) = refined {
-            (Some(TraceConfidence::Lsp), vec![refined], 1)
-        } else {
-            if self.counted_sites.insert(site_id) {
-                self.truncated.candidates += site.omitted;
-            }
-            (
-                site.confidence,
-                site.targets.clone(),
-                site.targets.len() + site.omitted,
-            )
-        };
+        let (confidence, targets, candidates) =
+            match self.refiner.resolve(self.graph, site_id).await {
+                Resolution::Project(target) => (Some(TraceConfidence::Lsp), vec![target], 1),
+                Resolution::External => return Vec::new(),
+                _ => {
+                    if self.counted_sites.insert(site_id) {
+                        self.truncated.candidates += site.omitted;
+                    }
+                    (
+                        site.confidence,
+                        site.targets.clone(),
+                        site.targets.len() + site.omitted,
+                    )
+                }
+            };
         let entry = |node| Entry {
             node,
             site: Some(site_id),
