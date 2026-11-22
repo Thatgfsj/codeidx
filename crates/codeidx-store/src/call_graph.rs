@@ -46,6 +46,7 @@ pub struct StoredCallSite {
     pub line: u32,
     pub character: Option<u32>,
     pub kind: CallSiteKind,
+    pub owner_hint: Option<String>,
     pub candidates: Vec<i64>,
     /// Count before applying the per-site candidate bound.
     pub candidate_count: usize,
@@ -85,7 +86,8 @@ fn snapshot(conn: &Connection) -> rusqlite::Result<CallGraph> {
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let mut stmt = conn.prepare(
         "SELECT s.id, s.caller_id, s.name, s.rel_path, s.line, s.character, s.kind,
-                s.candidate_count, s.confidence, e.callee_id
+                s.candidate_count, s.confidence, e.callee_id,
+                CASE WHEN s.target_kind = 'owner' THEN s.qualifier END
          FROM call_sites s LEFT JOIN call_edges e ON e.site_id = s.id
          WHERE s.kind = 'call' OR s.candidate_count <> 0
          ORDER BY s.rel_path, s.line, s.character, s.id, e.ordinal",
@@ -117,6 +119,7 @@ fn snapshot(conn: &Connection) -> rusqlite::Result<CallGraph> {
                 line: row.get(4)?,
                 character: row.get(5)?,
                 kind,
+                owner_hint: row.get(10)?,
                 candidates: Vec::new(),
                 candidate_count: row.get::<_, i64>(7)? as usize,
                 confidence,

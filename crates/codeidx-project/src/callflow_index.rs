@@ -14,6 +14,7 @@ pub(super) struct Node {
     pub location: TraceLocation,
     pub file_root: bool,
     pub method: bool,
+    owner: Option<String>,
     score: f64,
 }
 
@@ -28,6 +29,7 @@ pub(super) struct Site {
     pub inferred: bool,
     pub character: Option<u32>,
     pub lang: Option<Lang>,
+    owner_hint: Option<String>,
 }
 
 pub(super) struct Graph {
@@ -78,6 +80,7 @@ pub(super) fn snapshot(ctx: &ProjectContext, rank_roots: bool) -> Result<Graph, 
             },
             file_root: false,
             method: sym.parent.is_some(),
+            owner: sym.parent,
             score,
         });
     }
@@ -99,6 +102,7 @@ pub(super) fn snapshot(ctx: &ProjectContext, rank_roots: bool) -> Result<Graph, 
                     },
                     file_root: true,
                     method: false,
+                    owner: None,
                     score: 0.0,
                 });
                 id
@@ -133,6 +137,7 @@ pub(super) fn snapshot(ctx: &ProjectContext, rank_roots: bool) -> Result<Graph, 
             inferred: site.kind == CallSiteKind::Reference,
             character: site.character,
             lang: detect_lang(&site.rel_path),
+            owner_hint: site.owner_hint,
             targets,
         });
     }
@@ -238,8 +243,16 @@ impl Graph {
                     out.extend(
                         probes
                             .iter()
-                            .filter(|site| hits.binary_search(site).is_err())
-                            .map(|&site| (site, TraceBranch::Up)),
+                            .copied()
+                            .filter(|&site| {
+                                hits.binary_search(&site).is_err()
+                                    && self.sites[site].owner_hint == self.nodes[id].owner
+                            })
+                            .chain(probes.iter().copied().filter(|&site| {
+                                hits.binary_search(&site).is_err()
+                                    && self.sites[site].owner_hint != self.nodes[id].owner
+                            }))
+                            .map(|site| (site, TraceBranch::Up)),
                     );
                 }
             }
