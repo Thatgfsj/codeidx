@@ -12,6 +12,7 @@
 //! crate `codeidx-protocol`（Issue #4 契约规定的 `SearchHit` / `SymbolCode` /
 //! `OutlineEntry` DTO 与 `ToolError`）。protocol 无内部依赖，不产生环。
 
+mod call_graph;
 mod embedder;
 mod schema;
 mod search;
@@ -19,6 +20,7 @@ mod store;
 mod tokens;
 mod vec;
 
+pub use call_graph::{CallConfidence, CallGraph, CallSiteKind, CallSymbol, StoredCallSite};
 pub use embedder::{Embedder, FastembedEmbedder, EMBED_DIM};
 pub use store::{Store, StoreStats};
 

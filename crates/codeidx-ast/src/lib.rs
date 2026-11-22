@@ -10,12 +10,16 @@
 
 pub mod types;
 
+mod calls;
 mod chunk;
 mod extract;
+mod graph;
 mod lang;
 mod pagerank;
 mod repomap;
 
+pub use calls::{CallSite, CallSiteKind};
+pub use graph::enclosing_symbol;
 pub use lang::detect_lang;
 pub use pagerank::{pagerank, RepoNode};
 pub use repomap::repo_map;
@@ -26,13 +30,29 @@ pub use types::{Chunk, Lang, ParsedFile, SymbolDef, SymbolKind, SymbolRef};
 /// 纯 CPU 同步函数；超大文本（> 512KB）与解析失败返回尽力而为的
 /// 部分结果（空符号 / 引用），禁止 panic。
 pub fn parse_file(lang: Lang, rel_path: &str, text: &str) -> ParsedFile {
-    let (symbols, refs) = extract::extract(lang, rel_path, text);
+    parse(lang, rel_path, text, false).0
+}
+
+/// Parse a file and collect syntax-backed call sites from the same syntax tree.
+pub fn parse_file_with_calls(
+    lang: Lang,
+    rel_path: &str,
+    text: &str,
+) -> (ParsedFile, Vec<CallSite>) {
+    parse(lang, rel_path, text, true)
+}
+
+fn parse(lang: Lang, rel_path: &str, text: &str, trace: bool) -> (ParsedFile, Vec<CallSite>) {
+    let (symbols, refs, calls) = extract::extract(lang, rel_path, text, trace);
     let chunks = chunk::chunk_file(lang, rel_path, text, &symbols);
-    ParsedFile {
-        rel_path: rel_path.to_string(),
-        lang,
-        symbols,
-        refs,
-        chunks,
-    }
+    (
+        ParsedFile {
+            rel_path: rel_path.to_string(),
+            lang,
+            symbols,
+            refs,
+            chunks,
+        },
+        calls,
+    )
 }

@@ -23,21 +23,32 @@ mod kotlin;
 mod php;
 
 /// 提取单文件的符号与引用；任何失败返回空集，不 panic。
-pub(crate) fn extract(lang: Lang, rel_path: &str, text: &str) -> (Vec<SymbolDef>, Vec<SymbolRef>) {
+pub(crate) fn extract(
+    lang: Lang,
+    rel_path: &str,
+    text: &str,
+    trace: bool,
+) -> (Vec<SymbolDef>, Vec<SymbolRef>, Vec<crate::CallSite>) {
     if text.len() > MAX_PARSE_BYTES || text.contains('\0') {
-        return (Vec::new(), Vec::new());
+        return Default::default();
     }
     let mut parser = Parser::new();
     if parser.set_language(&language_of(lang)).is_err() {
-        return (Vec::new(), Vec::new());
+        return Default::default();
     }
     let Some(tree) = parser.parse(text, None) else {
-        return (Vec::new(), Vec::new());
+        return Default::default();
     };
     let mut ex = Extractor::new(lang, rel_path, text);
     ex.walk_defs(tree.root_node());
     ex.walk_refs(tree.root_node());
-    ex.finish()
+    let calls = if trace {
+        crate::calls::extract_calls(lang, tree.root_node(), text)
+    } else {
+        Vec::new()
+    };
+    let (symbols, refs) = ex.finish();
+    (symbols, refs, calls)
 }
 
 struct Extractor<'a> {
