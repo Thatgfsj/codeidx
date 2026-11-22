@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use codeidx_ast::{detect_lang, pagerank, Lang};
 use codeidx_protocol::ToolError;
@@ -12,8 +12,8 @@ pub(super) type SiteId = usize;
 
 pub(super) struct Node {
     pub location: TraceLocation,
-    pub end_line: u32,
     pub file_root: bool,
+    pub method: bool,
     score: f64,
 }
 
@@ -35,6 +35,9 @@ pub(super) struct Graph {
     pub sites: Vec<Site>,
     down: Vec<Vec<SiteId>>,
     up: Vec<Vec<SiteId>>,
+    reverse_probes: HashMap<(Lang, String), Vec<SiteId>>,
+    definition_names: HashSet<(Lang, String)>,
+    pub definitions_by_file: HashMap<String, Vec<NodeId>>,
     pub hashes: HashMap<String, String>,
     pub skipped: usize,
 }
@@ -73,8 +76,8 @@ pub(super) fn snapshot(ctx: &ProjectContext, rank_roots: bool) -> Result<Graph, 
                 line: sym.start_line,
                 symbol: sym.name,
             },
-            end_line: sym.end_line,
             file_root: false,
+            method: sym.parent.is_some(),
             score,
         });
     }
@@ -94,8 +97,8 @@ pub(super) fn snapshot(ctx: &ProjectContext, rank_roots: bool) -> Result<Graph, 
                         line: 0,
                         symbol: "<file>".into(),
                     },
-                    end_line: 0,
                     file_root: true,
+                    method: false,
                     score: 0.0,
                 });
                 id
@@ -135,10 +138,28 @@ pub(super) fn snapshot(ctx: &ProjectContext, rank_roots: bool) -> Result<Graph, 
     }
     let mut down = vec![Vec::new(); nodes.len()];
     let mut up = vec![Vec::new(); nodes.len()];
+    let mut definitions_by_file = HashMap::<String, Vec<_>>::new();
+    let mut definition_names = HashSet::new();
+    for (id, node) in nodes.iter().enumerate().filter(|(_, n)| !n.file_root) {
+        definitions_by_file
+            .entry(node.location.file.clone())
+            .or_default()
+            .push(id);
+        if let Some(lang) = detect_lang(&node.location.file) {
+            definition_names.insert((lang, node.location.symbol.clone()));
+        }
+    }
+    let mut reverse_probes = HashMap::<(Lang, String), Vec<_>>::new();
     for (id, site) in sites.iter().enumerate() {
         down[site.caller].push(id);
         for &target in &site.targets {
             up[target].push(id);
+        }
+        if let (Some(lang), Some(_)) = (site.lang, probe_priority(&nodes, site)) {
+            let key = (lang, site.location.symbol.clone());
+            if definition_names.contains(&key) {
+                reverse_probes.entry(key).or_default().push(id);
+            }
         }
     }
     let hashes = ctx
@@ -151,17 +172,53 @@ pub(super) fn snapshot(ctx: &ProjectContext, rank_roots: bool) -> Result<Graph, 
         sites,
         down,
         up,
+        reverse_probes,
+        definition_names,
+        definitions_by_file,
         hashes,
         skipped: ctx.callflow_skipped,
     })
 }
 
+/// Only precise, named calls can consume LSP budget. Probe an ambiguous or
+/// method-shaped candidate before a named zero-candidate site. The latter must
+/// additionally have at least one same-language definition in the snapshot.
+fn probe_priority(nodes: &[Node], site: &Site) -> Option<u8> {
+    if site.inferred
+        || site.callback
+        || site.character.is_none()
+        || site.location.symbol == "<dynamic>"
+    {
+        return None;
+    }
+    if site.confidence == Some(TraceConfidence::Ambiguous) {
+        Some(0)
+    } else if site.targets.iter().any(|&id| nodes[id].method) {
+        Some(1)
+    } else if site.targets.is_empty() {
+        Some(2)
+    } else {
+        None
+    }
+}
+
 impl Graph {
+    pub fn probe_priority(&self, id: SiteId) -> Option<u8> {
+        let site = &self.sites[id];
+        let priority = probe_priority(&self.nodes, site)?;
+        (priority < 2
+            || self
+                .definition_names
+                .contains(&(site.lang?, site.location.symbol.clone())))
+        .then_some(priority)
+    }
+
     pub fn frontier(
         &self,
         id: NodeId,
         branch: Option<TraceBranch>,
         direction: TraceDirection,
+        refine_lsp: bool,
     ) -> Vec<(SiteId, TraceBranch)> {
         let mut out = Vec::new();
         if branch != Some(TraceBranch::Up) && (branch.is_some() || direction != TraceDirection::Up)
@@ -171,7 +228,21 @@ impl Graph {
         if branch != Some(TraceBranch::Down)
             && (branch.is_some() || direction != TraceDirection::Down)
         {
-            out.extend(self.up[id].iter().map(|&site| (site, TraceBranch::Up)));
+            let hits = &self.up[id];
+            out.extend(hits.iter().map(|&site| (site, TraceBranch::Up)));
+            if refine_lsp {
+                let loc = &self.nodes[id].location;
+                if let Some(probes) = detect_lang(&loc.file)
+                    .and_then(|lang| self.reverse_probes.get(&(lang, loc.symbol.clone())))
+                {
+                    out.extend(
+                        probes
+                            .iter()
+                            .filter(|site| hits.binary_search(site).is_err())
+                            .map(|&site| (site, TraceBranch::Up)),
+                    );
+                }
+            }
         }
         out
     }
