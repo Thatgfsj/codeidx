@@ -8,12 +8,15 @@
 
 use std::path::PathBuf;
 
+use codeidx_project::callflow::{TraceDirection, TraceLocation, TraceReport};
 use codeidx_protocol::tools::{
     Location, MountReport, OutlineEntry, ProjectInfo, SearchHit, SearchMode, SymbolCode, SyncReport,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-/// 底部功能 tab（数字键 1-5 切换）。
+use crate::call_tree::CallTree;
+
+/// 功能 tab（数字键 1-6 切换）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Skeleton,
@@ -21,6 +24,7 @@ pub enum Tab {
     Outline,
     Lsp,
     Projects,
+    CallTree,
 }
 
 impl Tab {
@@ -32,6 +36,7 @@ impl Tab {
             '3' => Some(Tab::Outline),
             '4' => Some(Tab::Lsp),
             '5' => Some(Tab::Projects),
+            '6' => Some(Tab::CallTree),
             _ => None,
         }
     }
@@ -44,6 +49,7 @@ impl Tab {
             Tab::Outline => "3 Outline",
             Tab::Lsp => "4 Lsp",
             Tab::Projects => "5 Projects",
+            Tab::CallTree => "6 Calls",
         }
     }
 }
@@ -110,11 +116,22 @@ pub enum Cmd {
         line: u32,
         character: u32,
     },
+    TraceCalls {
+        path: PathBuf,
+        id: u64,
+        from: Option<TraceLocation>,
+        direction: TraceDirection,
+        refine: bool,
+    },
+    ReadTraceSymbol {
+        path: PathBuf,
+        location: TraceLocation,
+    },
     Quit,
 }
 
 /// 引擎回注事件（engine 工作线程 → main → apply_ev）。
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Ev {
     Mount(Result<MountReport, String>),
     Unmount(Result<(PathBuf, u32), String>),
@@ -127,6 +144,8 @@ pub enum Ev {
     Symbol(Result<Option<SymbolCode>, String>),
     /// (查询类别, 结果位置集)。
     Lsp(Result<(LspKind, Vec<Location>), String>),
+    TraceCalls(u64, Option<TraceLocation>, Result<TraceReport, String>),
+    TraceSymbol(PathBuf, Result<SymbolCode, String>),
 }
 
 /// search 结果包（对齐 SearchResult 的降级可见性语义，结构化自渲染）。
@@ -283,7 +302,7 @@ impl Default for LspState {
 }
 
 /// TUI 全量状态（渲染唯一事实来源）。
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct App {
     pub quit: bool,
     pub tab: Tab,
@@ -297,6 +316,7 @@ pub struct App {
     pub search: SearchState,
     pub outline: OutlineState,
     pub lsp: LspState,
+    pub call_tree: CallTree,
     /// 状态栏 VmRSS（KB，main 侧 IO 注入）。
     pub rss_kb: u64,
     /// spinner 帧计数（mounting 时驱动动画）。
@@ -317,6 +337,7 @@ impl Default for App {
             search: SearchState::default(),
             outline: OutlineState::default(),
             lsp: LspState::default(),
+            call_tree: CallTree::new(),
             rss_kb: 0,
             tick: 0,
         }
@@ -361,7 +382,7 @@ impl App {
         }
         let mut cmds = Vec::new();
         if !self.on_mount_page() {
-            if let KeyCode::F(n @ 1..=5) = key.code {
+            if let KeyCode::F(n @ 1..=6) = key.code {
                 self.tab = Tab::from_digit(char::from(b'0' + n)).expect("valid tab key");
                 return self.enter_tab_cmds();
             }
@@ -479,6 +500,10 @@ impl App {
             Tab::Outline => self.handle_outline_key(key),
             Tab::Lsp => self.handle_lsp_key(key),
             Tab::Projects => self.handle_projects_key(key),
+            Tab::CallTree => self
+                .active
+                .as_deref()
+                .map_or_else(Vec::new, |path| self.call_tree.handle(path, key.code)),
         }
     }
 
@@ -497,6 +522,7 @@ impl App {
                     }
                 }
                 Tab::Search | Tab::Outline | Tab::Lsp => {}
+                Tab::CallTree => return self.call_tree.enter(path),
                 Tab::Projects => {
                     cmds.push(Cmd::RefreshProjects);
                 }
@@ -738,6 +764,7 @@ impl App {
                     self.mount_page.busy = None;
                 }
                 self.active = Some(path.clone());
+                self.call_tree.reset();
                 self.set_toast(format!(
                     "mounted: {} files, {} symbols, {} ms{}",
                     report.files,
@@ -772,6 +799,7 @@ impl App {
                 self.search = SearchState::default();
                 self.outline = OutlineState::default();
                 self.lsp = LspState::default();
+                self.call_tree.reset();
                 cmds.push(Cmd::RefreshProjects);
             }
             Ev::Unmount(Err(e)) => {
@@ -832,6 +860,15 @@ impl App {
             }
             Ev::Symbol(Err(e)) => {
                 self.set_toast(format!("read_symbol failed: {e}"));
+            }
+            Ev::TraceCalls(id, from, result) => self.call_tree.apply(id, from, result),
+            Ev::TraceSymbol(path, result) => {
+                if self.active.as_ref() == Some(&path) && self.tab == Tab::CallTree {
+                    match result {
+                        Ok(code) => self.dialog = Dialog::SymbolText(code),
+                        Err(e) => self.set_toast(e),
+                    }
+                }
             }
             Ev::Lsp(Ok((kind, locations))) => {
                 self.lsp.busy = false;

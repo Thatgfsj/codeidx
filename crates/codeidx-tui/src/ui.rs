@@ -12,6 +12,9 @@ use codeidx_protocol::tools::{SearchMode, SymbolCode};
 
 use crate::app::{App, Dialog, Ev, Focus, LspKind, Tab};
 
+#[path = "ui_call_tree.rs"]
+mod call_tree;
+
 /// spinner 帧（mounting / busy）。
 const SPINNER: [&str; 8] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
 
@@ -157,6 +160,7 @@ fn draw_tabs(f: &mut Frame, area: Rect, app: &App) {
         Tab::Outline,
         Tab::Lsp,
         Tab::Projects,
+        Tab::CallTree,
     ];
     let selected = titles.iter().position(|t| *t == app.tab).unwrap_or(0);
     let tabs = Tabs::new(titles.iter().map(|t| Line::from(t.title())))
@@ -169,6 +173,7 @@ fn draw_tabs(f: &mut Frame, area: Rect, app: &App) {
         Tab::Outline => draw_outline(f, body, app),
         Tab::Lsp => draw_lsp(f, body, app),
         Tab::Projects => draw_projects(f, body, app),
+        Tab::CallTree => call_tree::draw(f, body, &app.call_tree),
     }
 }
 
@@ -548,7 +553,7 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(format!(" {rss} "), Style::new()),
         Span::styled(format!(" tab:{} ", app.tab.title()), Style::new().bold()),
         Span::styled(
-            " F1-F5:tab  q:quit  ?:keys",
+            " F1-F6:tab  q:quit  ?:keys",
             Style::new().fg(Color::DarkGray),
         ),
     ];
@@ -617,7 +622,7 @@ fn draw_dialog(f: &mut Frame, full: Rect, app: &App) {
             let area = centered(full, 80, 60, 3);
             f.render_widget(Clear, area);
             let help = [
-                "全局    F1-F5 tab  q 退出(挂载中二次确认)  ? 帮助  Ctrl+C 强制退出",
+                "全局    F1-F6 tab  q 退出(挂载中二次确认)  ? 帮助  Ctrl+C 强制退出",
                 "启动页  Enter 挂载  Ctrl+V enable_vector 开关  ↑↓ 从 HOME 目录填充路径",
                 "Skeleton  ↑↓ 滚动  PgUp/PgDn token_budget ±500 (500-8000)",
                 "Search  Tab 循环 keyword/hybrid/vector  +/- top_k  Enter 搜索",
@@ -626,6 +631,8 @@ fn draw_dialog(f: &mut Frame, full: Rect, app: &App) {
                 "Lsp     输入 rel:line:col  Enter definition  Ctrl+R references",
                 "        首次调用冷启动需数秒",
                 "Projects  s: sync  u: unmount(确认)  Enter: 刷新",
+                "Calls   ↑↓ 选择  ←→ 折叠/展开  Enter 源码  t 从选中项追踪  Esc 返回",
+                "        d 切换追踪方向  l 开关 LSP  r 刷新根列表",
                 "",
                 "Esc 关闭本帮助",
             ];

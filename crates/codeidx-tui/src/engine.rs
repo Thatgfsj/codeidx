@@ -13,8 +13,9 @@ use std::time::Instant;
 
 use codeidx_ast::{detect_lang, repo_map};
 use codeidx_lsp::LspBridge;
+use codeidx_project::callflow::{trace_calls, TraceLocation, TraceOptions};
 use codeidx_project::ProjectManager;
-use codeidx_protocol::tools::{Location, SearchHit, SearchMode};
+use codeidx_protocol::tools::{Location, SearchHit, SearchMode, SymbolCode};
 use codeidx_protocol::ToolError;
 
 use crate::app::{Cmd, Ev, LspKind, SearchOutcome};
@@ -205,8 +206,68 @@ fn run_cmd(
             character,
             LspKind::References,
         ),
+        Cmd::TraceCalls {
+            path,
+            id,
+            from,
+            direction,
+            refine,
+        } => {
+            let options = TraceOptions {
+                from: from.clone(),
+                direction,
+                refine_lsp: refine,
+                ..TraceOptions::default()
+            };
+            let result = runtime
+                .block_on(trace_calls(
+                    manager,
+                    Some(bridge),
+                    &path.to_string_lossy(),
+                    options,
+                ))
+                .map_err(|e| e.message);
+            Ev::TraceCalls(id, from, result)
+        }
+        Cmd::ReadTraceSymbol { path, location } => {
+            let result = read_trace_symbol(manager, &path, &location).map_err(|e| e.message);
+            Ev::TraceSymbol(path, result)
+        }
         Cmd::Quit => Ev::Projects(Vec::new()),
     }
+}
+
+/// Read the indexed definition at exactly the selected location. Symbols can
+/// share a name even within the same file, so a name-only lookup is insufficient.
+fn read_trace_symbol(
+    manager: &ProjectManager,
+    path: &Path,
+    at: &TraceLocation,
+) -> Result<SymbolCode, ToolError> {
+    manager.with_project(path, |ctx| {
+        let mut matches = ctx
+            .parsed
+            .get(&at.file)
+            .into_iter()
+            .flat_map(|file| &file.chunks)
+            .filter(|chunk| {
+                chunk.start_line == at.line && chunk.symbol.as_deref() == Some(at.symbol.as_str())
+            });
+        let chunk = matches
+            .next()
+            .ok_or_else(|| ToolError::new("调用链位置已失效，按 r 刷新"))?;
+        if matches.next().is_some() {
+            return Err(ToolError::new("同一行包含多个同名定义，无法定位唯一源码"));
+        }
+        let (_, code) = chunk.text.split_once('\n').unwrap_or(("", &chunk.text));
+        Ok(SymbolCode {
+            file: at.file.clone(),
+            name: at.symbol.clone(),
+            start_line: chunk.start_line,
+            end_line: chunk.end_line,
+            code: code.to_owned(),
+        })
+    })
 }
 
 /// LSP 请求：语言探测 → 读源文件文本 → 使用常驻 runtime。

@@ -4,10 +4,11 @@
 //! LspBridge，不连接 MCP 服务。架构纪律：
 //! - mount 等秒级~分钟级引擎工作全部在引擎线程池执行（engine.rs），
 //!   UI 循环以 16ms poll 驱动 spinner 与引擎结果轮询，保持 60fps 响应；
-//! - `--selftest`：无 tty 全状态机自检（挂载 fixture → 五 tab 渲染断言
+//! - `--selftest`：无 tty 全状态机自检（挂载 fixture → 六个 tab 渲染断言
 //!   → unmount），供 CI / Lead 黑盒验收。
 
 mod app;
+mod call_tree;
 mod engine;
 mod selftest;
 mod ui;
