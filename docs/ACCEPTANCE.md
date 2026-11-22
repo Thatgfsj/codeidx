@@ -24,7 +24,7 @@ awk 'length > 0 && FNR > 1000 { print FILENAME": "FNR" lines"; bad=1 } END { exi
 | # | 用例 | 断言 |
 |---|---|---|
 | F1.1 | initialize → initialized | protocolVersion/tools 能力返回，`tools.listChanged=false`，无 `instructions` |
-| F1.2 | tools/list | 挂载前一次返回全部 11 个工具 |
+| F1.2 | tools/list | 挂载前一次返回全部 12 个工具 |
 | F1.3 | mount_project(fixtures) | mounted=true, files>0, symbols>0, elapsed_ms 记录 |
 | F1.4 | list_mounted_projects | 含该 path，lsps 为空数组 |
 | F1.5 | get_repo_map(budget=1000) | 非空；被多次引用的核心符号排前；截断标记生效 |
@@ -61,6 +61,10 @@ awk 'length > 0 && FNR > 1000 { print FILENAME": "FNR" lines"; bad=1 } END { exi
 | F3.5 | 未装某语言 LSP 时调用 | isError 优雅提示，不崩溃 |
 | F3.6 | lsp_definition(polyglot app.py 构造调用) | 跳 models.py 类定义行（basedpyright-langserver --stdio） |
 | F3.7 | lsp_references(polyglot types.go 方法) | 引用集含 main.go 调用行（gopls，需 workspaceFolders + PATH 上有 go） |
+
+## 调用链与终端回归
+
+`node scripts/bb_callflow.mjs <codeidx-mcp>` 验证调用关系、上行和双向、续查、循环、预算、跨文件更新与单正文格式。`codeidx-tui --selftest` 验证原生调用链页的交互。
 
 ## 5. 流程规范
 

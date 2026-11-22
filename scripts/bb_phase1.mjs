@@ -43,7 +43,7 @@ async function main() {
     expect(!Object.hasOwn(caps, 'instructions'), 'initialize has no agent instructions');
   });
 
-  await runCase('F1.2', '挂载前 tools/list 已列出全部 11 个工具', async () => {
+  await runCase('F1.2', '挂载前 tools/list 已列出全部 12 个工具', async () => {
     const res = await c.call('tools/list');
     const names = res.result.tools.map(t => t.name).sort();
     for (const { name, inputSchema } of res.result.tools) {
@@ -52,10 +52,10 @@ async function main() {
       expect(!inputSchema.required.includes('format'), `${name} format may be omitted`);
       expect(format.description?.includes('用户明确要求'), `${name} documents explicit format selection`);
     }
-    expectEq(names.length, 11, 'tool count');
+    expectEq(names.length, 12, 'tool count');
     for (const want of ['mount_project', 'unmount_project', 'list_mounted_projects', 'sync_project',
       'get_repo_map', 'search_code', 'get_file_outline', 'read_symbol',
-      'lsp_definition', 'lsp_references', 'lsp_hover']) {
+      'lsp_definition', 'lsp_references', 'lsp_hover', 'trace_calls']) {
       expect(names.includes(want), `tools/list contains ${want} (got ${names.join(',')})`);
     }
   });

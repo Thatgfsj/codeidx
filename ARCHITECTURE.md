@@ -69,6 +69,7 @@ ast, protocol  // 叶子 crate，无内部依赖
 | get_repo_map / get_file_outline | 按路径分组的符号或单文件符号行 |
 | search_code | 模式和预算摘要，加按路径分组的命中 |
 | read_symbol | 路径、行范围和完整实现 |
+| trace_calls | 调用树、位置、置信度、截断和 LSP 降级摘要 |
 | lsp_definition / lsp_references | `path:line:character` 位置 |
 | lsp_hover | 悬停文本 |
 
