@@ -1,0 +1,29 @@
+{
+  "name": "codeidx",
+  "version": "0.1.0",
+  "description": "Native code indexing MCP server and terminal interface",
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Thatgfsj/codeidx.git",
+    "directory": "npm/launcher"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "codeidx-mcp": "bin/codeidx-mcp.cjs",
+    "codeidx-tui": "bin/codeidx-tui.cjs"
+  },
+  "optionalDependencies": {
+    "@thatgfsj/codeidx-linux-x64": "0.1.0",
+    "@thatgfsj/codeidx-win32-x64": "0.1.0"
+  },
+  "files": [
+    "bin"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}
